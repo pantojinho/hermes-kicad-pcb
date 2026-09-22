@@ -253,7 +253,7 @@ def gen_project(outdir: Path) -> Path:
             "rules": {"min_track_width": 0.127, "min_clearance": 0.127,
                        "min_through_hole_diameter": 0.2, "min_via_diameter": 0.45},
             "rule_severities": {
-                "solder_mask_bridge": "warning",   # cosmetic on tight boards (documented pitfall)
+                "solder_mask_bridge": "warning",   # preserve as visible finding; never auto-accept
                 "lib_footprint_issues": "warning",
                 # the official USB-C footprint places NPTH mounting holes next
                 # to its own GND pads by design — inherent to the lib part
@@ -477,13 +477,10 @@ def drc(outdir: Path) -> int:
     parity = rep.get("schematic_parity", [])
     print(f"[drc] {len(errors)} error(s), {len(warns)} warning(s), "
           f"unconnected {len(unconn)}, parity {len(parity)}")
-    from collections import Counter
-    for v in (errors + unconn)[:8]:
+    for v in (errors + warns + unconn + parity)[:12]:
         print(f"   - {v.get('type')}: {str(v.get('description', ''))[:90]}")
-    if Counter(v["type"] for v in errors).get("item_not_allowed", 0) == len(errors) == 0 and not unconn:
-        pass
-    if not errors and not unconn:
-        print("DRC: PASS")
+    if not errors and not warns and not unconn and not parity:
+        print("DRC: PASS (engineering review still required)")
         return 0
     print("DRC: FAIL")
     return 4

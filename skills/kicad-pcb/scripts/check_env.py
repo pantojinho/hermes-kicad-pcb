@@ -8,6 +8,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -28,10 +30,21 @@ def check_python_pcbnew() -> str:
         "install KiCad 10 (includes the pcbnew bindings) or set KICAD_PYTHON")
 
 
+def check_kicad_cli() -> str:
+    cli = kp.kicad_cli()
+    r = subprocess.run([str(cli), "version"], capture_output=True, text=True, timeout=30)
+    version = (r.stdout or r.stderr).strip()
+    match = re.search(r"\b(\d+)\.(\d+)", version)
+    if r.returncode != 0 or not match or int(match.group(1)) < 10:
+        raise kp.ResolveError("kicad-cli >= 10", f"found {cli} ({version or 'unknown version'}); "
+                              "install KiCad 10 or set KICAD_CLI to its executable")
+    return f"{cli} ({version})"
+
+
 CHECKS = [
     ("python+pcbnew", check_python_pcbnew),
     ("footprints dir", kp.footprints_dir),
-    ("kicad-cli", kp.kicad_cli),
+    ("kicad-cli", check_kicad_cli),
     ("freerouting", lambda: kp.freerouting()[1]),
 ]
 

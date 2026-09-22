@@ -139,12 +139,12 @@ def stage_drc(outdir: Path) -> int:
           f"unconnected: {len(unconn)} | parity: {len(parity)}")
     for v in (errors + unconn + parity)[:10]:
         print(f"   - {v.get('type', '?')}: {str(v.get('description', ''))[:100]}")
-    for v in warnings[:5]:
-        print(f"   ~ warning {v.get('type', '?')} (cosmetic, ignorable)")
-    if errors or unconn or parity:
+    for v in warnings[:10]:
+        print(f"   ~ warning {v.get('type', '?')}: {str(v.get('description', ''))[:100]}")
+    if errors or warnings or unconn or parity:
         print("DRC: FAIL")
         return 4
-    print("DRC: PASS (0 error violations, 0 unconnected, 0 parity)")
+    print("DRC: PASS (0 errors, 0 warnings, 0 unconnected, 0 parity; engineering review still required)")
     return 0
 
 

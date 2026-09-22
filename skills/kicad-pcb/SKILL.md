@@ -1,9 +1,9 @@
 ---
 name: kicad-pcb
-description: 'Headless KiCad PCB automation for Linux/Windows/macOS — pcbnew Python + kicad-cli + Freerouting (DSN/SES). Also imports EasyEDA / EasyEDA Pro PCBs into KiCad. Use when building, routing, autorouting, validating (DRC/ERC) or exporting (gerber, drill, BOM, CPL) a PCB without the KiCad GUI. Triggered by KiCad, pcbnew, kicad-cli, PCB, placa, schematic, esquemático, autorouter, Freerouting, DSN, SES, DRC, ERC, gerber, BOM, pick-and-place, CPL, JLCPCB, PCBWay, EasyEDA, JLCEDA, LCSC, footprint, ESP32 board, kicad_pcb, kicad_sch.'
+description: 'Headless KiCad PCB automation using pcbnew Python, kicad-cli and optional Freerouting DSN/SES on Linux, Windows and macOS. Use for an existing, electrically reviewed KiCad design when scripting board placement/routing, running ERC/DRC, importing EasyEDA PCB geometry or exporting manufacturing files after the project release gate. This skill does not select circuits, certify electrical safety or replace RF, mechanical and fab review.'
 ---
 
-# KiCad PCB automation (headless, Astra-style, cross-platform)
+# KiCad PCB automation (headless, cross-platform)
 
 Design, route, validate and export PCBs without the GUI: pcbnew Python for board
 manipulation, `kicad-cli` for DRC/ERC/export, Freerouting headless for autorouting
@@ -96,14 +96,14 @@ nothing to configure.
 4. `pcbnew.NewBoard(path)` requires the filename arg (KiCad 10).
 5. Board outline on Edge.Cuts is REQUIRED before DRC/autorouting. `SHAPE_T_RECT` (uppercase) etc.; coords `VECTOR2I` in nm; `mm = pcbnew.FromMM`.
 6. `kicad-cli` 10.0.6 does NOT export DSN / import SES — use `pcbnew.ExportSpecctraDSN(board, path)` / `pcbnew.ImportSpecctraSES(board, path)`. `kicad-cli pcb import` does NOT know EasyEDA — that import lives in Python (`PCB_IO_MGR`).
-7. solder_mask_bridge DRC warnings on tight boards are cosmetic mask apertures — real gates are `unconnected_items` + `schematic_parity`.
+7. Review every DRC warning against the actual fabrication process. A `solder_mask_bridge` warning may require a mask expansion, aperture or stencil change; it is not automatically cosmetic. Unconnected items and schematic parity are additional gates, not substitutes for warning review.
 8. Multi-pad numbers (e.g. ESP32-WROOM-32 thermal pad): several sub-pads share one number — set the net on ALL of them via `fp.Pads()`, else same-number pads short.
 9. Symbol pin names ≠ pad names: map via pin number; derived symbols (`extends`) have no own pins — resolve parent and rename nested unit blocks.
 10. Footprint anchor is often pad 1, NOT the center. Placement math MUST use real bounding boxes (pads + F.Fab); NEVER `GetBoundingBox()` (includes text + antenna keepout, destroys packers).
-11. ESP32/RF modules: keep the antenna keepout entirely off the board edge; copper under the antenna kills RF and trips items_not_allowed.
-12. Design rules (min track/drill) live in the `.kicad_pro`, NOT the board: write a `.kicad_pro` (min_track_width 0.127, min_through_hole_diameter 0.2) before DRC, else defaults (0.2mm) reject Freerouting's 0.15mm tracks.
-13. Auto-placement with pad+F.Fab bbox packing + 1.0mm gap gives collision-free layouts and lets Freerouting reach 0 unrouted / 0 violations (validated: esp32-dev, 177 tracks).
-14. Schematic generation: format version 20260101 works on KiCad 10.0.6; labels at pin-tip coordinates provide connectivity; pin_not_driven ERC noise is expected without power flags.
+11. ESP32/RF modules: use the exact module manufacturer's antenna placement and copper/ground keepout guidance. Edge overhang and clearance are package- and board-specific; inspect the return path and enclosure too.
+12. Project-level design rules live in `.kicad_pro`; set track, clearance, via and drill limits from the selected fabricator's current stack/service and the approved net classes. The example's 0.127 mm track and 0.2 mm drill are demo settings, not universal minima.
+13. Bounding-box packing with a gap worked in the ESP32 demo (177 tracks), but it proves neither collision freedom nor electrical, RF, thermal or assembly quality on another board. Inspect courtyards, height, orientation, keepouts and service access.
+14. Schematic generation: format version 20260101 worked on KiCad 10.0.6. Check labels and actual netlist connectivity; investigate each `pin_not_driven` finding against the intended power source instead of suppressing it categorically.
 15. Imported EasyEDA boards keep the ORIGINAL design rules of the source project — expect DRC violations against KiCad/JLCPCB defaults (a real import showed 498). Triage them; don't blanket-fix.
 
 ## JLCPCB-class fab rules (2-layer)
@@ -114,10 +114,9 @@ annular ring 0.125mm, **board min 6×6mm**, thickness 0.4–2.4mm (default 1.6).
 Standard), PCBA BOM/CPL upload workflow and rotation-offset cautions:
 **`references/jlcpcb-rules.md`** (adapted from aklofas/kicad-happy, MIT).
 
-## The Astra workflow (distilled from JLCPCB/NextPCB reviews of GPT-6 Astra)
+## Reviewed-design workflow
 
-What worked was orchestrating specialist tools (KiCad + Freerouting via DSN/SES),
-NOT raw GUI computer-use. Headless version:
+The [official GPT-6 Astra example](https://openai.com/pt-BR/index/gpt-6-astra/) shows a KiCad PCB layout with placement and copper routing. It does not specify Freerouting, DSN/SES, headless operation or a particular GUI/API technique. The following is this skill's optional headless workflow for an **already reviewed** circuit:
 1. One project folder with datasheet + reference designs.
 2. One complete brief: supply voltage, channel count, load impedance, component tech, size limit.
 3. Verify the reference design against the CURRENT datasheet revision.
@@ -125,10 +124,9 @@ NOT raw GUI computer-use. Headless version:
 5. Verify every footprint before layout: pin 1, pad numbering, polarity, land dims.
 6. Set design rules to the fab values you will order against; fixed outline; then place.
 7. Define and LOCK critical copper first (supply, bootstrap, switching).
-8. Autorouter only for low-current nets; refill zones; confirm locked copper survived.
+8. If Freerouting is appropriate, use it only for ordinary nets after protecting critical RF, high-current, switching, USB and timing-sensitive routes; inspect the imported result, refill zones and confirm protected copper survived.
 9. Ship libraries with the project (sym-lib-table / fp-lib-table via ${KIPRJMOD}).
-10. Run ERC + DRC + unconnected + schematic parity TOGETHER; fix every issue at source (never add exclusions just to pass); only then export gerbers/drill/BOM/pos.
-Parity is the check that catches what DRC misses (Astra shipped 46 parity issues with a "clean" DRC).
+10. Run ERC, DRC, unconnected and schematic-parity checks together; review all warnings and documented exceptions. A zero-item report does not certify electrical safety, RF behavior or factory fit. Export production files only after the project's independent review and release gate.
 
 ## Raw pcbnew calls (quick reference)
 
