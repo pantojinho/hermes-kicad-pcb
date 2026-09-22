@@ -116,6 +116,15 @@ nothing to configure.
     and footprints `SetPath(KIID_PATH("/<symbol uuid>"))` + `SetFPID(LIB_ID(lib, fp))`
     so `pcb drc --schematic-parity` can match them (see `simple_board.py`). Check labels and actual netlist connectivity; investigate each `pin_not_driven` finding against the intended power source instead of suppressing it categorically.
 15. Imported EasyEDA boards keep the ORIGINAL design rules of the source project — expect DRC violations against KiCad/JLCPCB defaults (a real import showed 498). Triage them; don't blanket-fix.
+16. Edge connectors (USB-C etc.): rotate so the mouth faces OUT and slide the
+    footprint until its `PCB Edge` line (Dwgs.User) sits on the outline — a
+    rot-0 horizontal receptacle points its opening INTO the board. Modules that
+    overhang on purpose (ESP32 antenna) leave silkscreen past the edge: trim it
+    (`silk_edge_clearance`) instead of ignoring the check.
+17. Post-route stitching vias go through BOTH layers: test candidate spots against
+    foreign-net tracks and vias (not only pads) and against vias already placed,
+    or a routing change silently turns into `shorting_items` / `holes_co_located`.
+    KiCad 10: a via's width is per layer, `via.GetWidth(pcbnew.F_Cu)`.
 
 ## JLCPCB-class fab rules (2-layer)
 
