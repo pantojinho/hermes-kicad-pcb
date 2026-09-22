@@ -4,9 +4,9 @@
 [![ci](https://github.com/pantojinho/hermes-kicad-pcb/actions/workflows/ci.yml/badge.svg)](https://github.com/pantojinho/hermes-kicad-pcb/actions/workflows/ci.yml)
 
 Headless PCB design skill for **Linux, Windows and macOS**: native schematics,
-collision-free placement, Freerouting autorouting (DSN/SES), DRC/ERC verification,
-gerber/drill/BOM export and **EasyEDA / EasyEDA Pro import** — the GPT-6 Astra
-workflow, without the GUI. Validated end-to-end on Linux; Windows/macOS via runtime
+scripted placement, optional Freerouting autorouting (DSN/SES), DRC/ERC reporting,
+gerber/drill/BOM export and **EasyEDA / EasyEDA Pro import**. It is an optional KiCad
+automation path, not a reproduction of the GPT-6 Astra workflow. Validated end-to-end on Linux; Windows/macOS via runtime
 resolvers + CI smoke. Every tool and path is resolved at runtime (env var > known
 location > PATH), so the same commands run on any OS.
 
@@ -22,7 +22,7 @@ npx skills add pantojinho/hermes-kicad-pcb
 
 > **Hermes security scan**: the Hermes skills scanner may flag this skill as
 > CAUTION (reads of `os.environ` + `subprocess` calls — inherent to a skill that
-> orchestrates kicad-cli/Freerouting/pcbnew; no network access, no `shell=True`,
+> orchestrates kicad-cli/Freerouting/pcbnew; the optional LCSC lookup uses network access; no `shell=True`,
 > no dynamic commands). Review with `hermes skills inspect
 > pantojinho/hermes-kicad-pcb/kicad-pcb` and install with `--force` if you agree.
 
@@ -81,7 +81,7 @@ Optional env overrides: `KICAD_PYTHON`, `KICAD_CLI`,
 
 | File | Purpose |
 |---|---|
-| `skills/kicad-pcb/SKILL.md` | Astra-style workflow + validated headless pipelines + 15 pitfalls |
+| `skills/kicad-pcb/SKILL.md` | Reviewed-design workflow + headless pipelines + 15 pitfalls |
 | `skills/kicad-pcb/references/api-cheatsheet.md` | Verified pcbnew Python calls (KiCad 10.0.6) + Freerouting bundle-first guide |
 | `skills/kicad-pcb/references/jlcpcb-rules.md` | JLCPCB fab/assembly rules + PCBA BOM/CPL upload workflow |
 | `skills/kicad-pcb/scripts/kicad_paths.py` | Cross-platform tool resolvers (env > known paths > PATH) |

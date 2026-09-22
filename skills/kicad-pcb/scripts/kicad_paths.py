@@ -104,19 +104,23 @@ def kicad_cli() -> Path:
     env = os.environ.get("KICAD_CLI")
     if env and Path(env).exists():
         return Path(env)
-    w = shutil.which("kicad-cli.exe") or shutil.which("kicad-cli")
-    if w:
-        return Path(w)
     if IS_WIN:
+        hits: list[Path] = []
         for root in (Path("C:/Program Files/KiCad"),
                      Path.home() / "AppData/Local/Programs/KiCad"):
-            hits = sorted(root.glob("*/bin/kicad-cli.exe")) if root.is_dir() else []
-            if hits:
-                return hits[-1]  # highest version
+            if root.is_dir():
+                hits.extend(root.glob("*/bin/kicad-cli.exe"))
+        if hits:
+            # Installed numeric version takes priority over a stale PATH entry.
+            return max(hits, key=lambda p: tuple(int(n) for n in
+                       re.findall(r"\d+", p.parent.parent.name)) or (0,))
     if IS_MAC:
         p = Path("/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli")
         if p.exists():
             return p
+    w = shutil.which("kicad-cli.exe") or shutil.which("kicad-cli")
+    if w:
+        return Path(w)
     raise ResolveError("kicad-cli", "install KiCad 10 (kicad.kicad.org) or set KICAD_CLI")
 
 
