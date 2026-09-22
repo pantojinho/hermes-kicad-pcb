@@ -56,7 +56,7 @@ jobs:
         # pymupdf converts the schematic PDF to PNG (no pdftoppm on Windows).
         shell: pwsh
         run: |
-          pip install pymupdf -q
+          python -m pip install pymupdf -q
           python skills/kicad-pcb/scripts/esp32_example.py --out out
       - name: Rename Windows renders
         shell: pwsh
