@@ -53,8 +53,11 @@ jobs:
       - name: Full example (ESP32 + LED + USB-C)
         # NOTE: kicad-cli is NOT on PATH (KiCad installer does not add bin\),
         # but the scripts resolve C:\Program Files\KiCad\*\bin\ themselves.
+        # pymupdf converts the schematic PDF to PNG (no pdftoppm on Windows).
         shell: pwsh
-        run: python skills/kicad-pcb/scripts/esp32_example.py --out out
+        run: |
+          pip install pymupdf -q
+          python skills/kicad-pcb/scripts/esp32_example.py --out out
       - name: Rename Windows renders
         shell: pwsh
         run: |
