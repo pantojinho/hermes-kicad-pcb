@@ -44,12 +44,12 @@ jobs:
         run: |
           $url = "https://github.com/freerouting/freerouting/releases/download/v2.4.1/freerouting-2.4.1-windows-x64.msi"
           Invoke-WebRequest -Uri $url -OutFile freerouting.msi
-          Start-Process msiexec -ArgumentList '/i','freerouting.msi','/qn','/l*v','msi-install.log' -Wait
-          Select-String -Path msi-install.log -Pattern 'INSTALLDIR|TARGETDIR| freerouting' | Select-Object -First 15 | ForEach-Object { $_.Line.Trim() }
-          $fr = Get-ChildItem "C:\Program Files","C:\Program Files (x86)","$env:LOCALAPPDATA\Programs" -Recurse -Filter "*freerouting*.exe" -ErrorAction SilentlyContinue | Select-Object -First 3
-          $fr.FullName
-          if (-not $fr) { throw "freerouting exe not found after MSI install - check log above" }
-          "FREEROUTING_EXE=$($fr[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Start-Process msiexec -ArgumentList '/i','freerouting.msi','/qn' -Wait
+          # MSI 2.4.1 installs per-user to AppData\Local\freerouting (jpackage layout)
+          $fr = Get-ChildItem "$env:LOCALAPPDATA\freerouting" -Recurse -Filter "freerouting.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $fr) { throw "freerouting.exe not found under $env:LOCALAPPDATA\freerouting" }
+          "FREEROUTING_EXE=$($fr.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "FREEROUTING_EXE=$($fr.FullName)"
       - name: Full example (ESP32 + LED + USB-C)
         # NOTE: kicad-cli is NOT on PATH (KiCad installer does not add bin\),
         # but the scripts resolve C:\Program Files\KiCad\*\bin\ themselves.

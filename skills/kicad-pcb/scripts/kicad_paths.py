@@ -161,8 +161,10 @@ def freerouting() -> tuple[str, list[str]]:
     home = Path.home()
     exe_globs: list[Path] = []
     if IS_WIN:
+        # MSI 2.4.1 default is a per-user jpackage app-image in AppData\Local\freerouting
         exe_globs += [Path("C:/Program Files/Freerouting/**/freerouting.exe"),
-                      Path.home() / "AppData/Local/Programs/Freerouting/**/freerouting.exe",
+                      home / "AppData/Local/freerouting/**/freerouting.exe",
+                      home / "AppData/Local/Programs/Freerouting/**/freerouting.exe",
                       home / "Work/tools/freerouting*/**/freerouting.exe"]
     elif IS_MAC:
         exe_globs += [Path("/Applications/Freerouting.app/Contents/MacOS/*"),
