@@ -58,6 +58,9 @@ jobs:
         run: |
           python -m pip install pymupdf -q
           python skills/kicad-pcb/scripts/esp32_example.py --out out
+          # the example re-execs in KiCad's python (no pymupdf there) and keeps
+          # the PDF; convert it here with the runner python instead
+          python -c "import fitz; doc = fitz.open('out/esp32-devboard.pdf'); doc[0].get_pixmap(dpi=150).save('out/renders/schematic.png')"
       - name: Rename Windows renders
         shell: pwsh
         run: |
