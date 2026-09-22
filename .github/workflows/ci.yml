@@ -22,6 +22,8 @@ jobs:
           skills/kicad-pcb/scripts/easyeda_bridge.py
           skills/kicad-pcb/scripts/esp32_example.py
           skills/kicad-pcb/scripts/simple_board.py
+          skills/kicad-pcb/scripts/sch_gen.py
+          .github/scripts/example_gate.py
       - name: SKILL.md frontmatter (real YAML parse)
         run: |
           pip install pyyaml -q
@@ -30,25 +32,20 @@ jobs:
         run: python skills/kicad-pcb/scripts/check_env.py
 
   windows-e2e:
-    # Real Windows validation: install KiCad + Freerouting, run the full example
-    # (schematic + board + autoroute + 3D render + schematic export), upload renders.
+    # Real Windows validation: KiCad (winget) + Freerouting (MSI). Runs both examples,
+    # gates them (.github/scripts/example_gate.py) and uploads the renders.
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install KiCad (winget)
-        run: winget install --id KiCad.KiCad -e --accept-source-agreements --accept-package-agreements
+      - name: Install KiCad (winget) + pymupdf (schematic SVG -> PNG)
+        run: |
+          winget install --id KiCad.KiCad -e --accept-source-agreements --accept-package-agreements
+          python -m pip install pymupdf -q
       - name: KiCad-only board (no Freerouting) - ERC + DRC/parity must be clean
         run: python skills/kicad-pcb/scripts/simple_board.py --out simple-out
-      - name: ESP32 schematic ERC - no label may land on the wrong pin
-        shell: pwsh
-        run: |
-          python skills/kicad-pcb/scripts/esp32_example.py --stage sch --out esp-sch
-          $cli = (Get-ChildItem "C:/Program Files/KiCad/*/bin/kicad-cli.exe" | Select-Object -Last 1).FullName
-          & $cli sch erc --format json -o esp-sch/erc.json esp-sch/esp32-devboard.kicad_sch
-          python -c "import json,sys; v=[x['type'] for s in json.load(open('esp-sch/erc.json'))['sheets'] for x in s['violations']]; bad=[t for t in v if t in ('label_dangling','ground_pin_not_ground')]; print(len(v),'ERC findings; wrong-pin indicators:',bad); sys.exit(1 if bad else 0)"
       - name: Install Freerouting (official MSI from GitHub releases)
         shell: pwsh
         run: |
@@ -60,32 +57,73 @@ jobs:
           if (-not $fr) { throw "freerouting.exe not found under $env:LOCALAPPDATA\freerouting" }
           "FREEROUTING_EXE=$($fr.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "FREEROUTING_EXE=$($fr.FullName)"
-      - name: Full example (ESP32 + LED + USB-C)
-        # NOTE: kicad-cli is NOT on PATH (KiCad installer does not add bin\),
-        # but the scripts resolve C:\Program Files\KiCad\*\bin\ themselves.
-        # pymupdf converts the schematic PDF to PNG (no pdftoppm on Windows).
+      - name: Full example (ESP32 + LED + USB-C) + gate
+        # kicad-cli is NOT on PATH on Windows; the scripts resolve it themselves.
+        # exit 4 = DRC findings present; the gate decides which ones are allowed.
         shell: pwsh
         run: |
-          python -m pip install pymupdf -q
           python skills/kicad-pcb/scripts/esp32_example.py --out out
-          # the example re-execs in KiCad's python (no pymupdf there) and keeps
-          # the PDF; convert it here with the runner python instead
-          python -c "import fitz; doc = fitz.open('out/esp32-devboard.pdf'); doc[0].get_pixmap(dpi=150).save('out/renders/schematic.png')"
-      - name: Rename Windows renders
+          if ($LASTEXITCODE -notin 0, 4) { exit $LASTEXITCODE }
+          python .github/scripts/example_gate.py out
+      - name: Collect renders
+        if: always()
         shell: pwsh
         run: |
-          if (Test-Path out/renders/board-top.png) { Move-Item out/renders/board-top.png example-3d-windows.png -Force } else { "3D render skipped on this runner" }
-          if (Test-Path out/renders/schematic.png) { Move-Item out/renders/schematic.png example-schematic-windows.png -Force } else { "schematic png skipped (pdf-only)" }
+          New-Item -ItemType Directory -Force renders | Out-Null
+          Copy-Item out/renders/* renders/ -ErrorAction SilentlyContinue
+          Copy-Item simple-out/simple-led-3d-top.png, simple-out/simple-led-schematic.* renders/ -ErrorAction SilentlyContinue
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: windows-e2e
-          if-no-files-found: error
           path: |
-            example-3d-windows.png
-            example-schematic-windows.png
+            renders/
             out/esp32-drc.json
-            out/esp32-routed.kicad_pcb
-            simple-out/simple-led-3d-top.png
-            simple-out/simple-led-gerbers.zip
+            out/esp32-erc.json
             simple-out/drc.json
             simple-out/erc.json
+            simple-out/simple-led-gerbers.zip
+
+  linux-e2e:
+    # Same pipeline on Ubuntu: KiCad 10 from the official PPA (pcbnew in the system
+    # python3) + Freerouting linux-x64 bundle (embedded JRE, no system Java).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install KiCad 10 (PPA) + xvfb (3D render) + pymupdf
+        run: |
+          sudo add-apt-repository -y ppa:kicad/kicad-10.0-releases
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends kicad kicad-symbols kicad-footprints xvfb unzip
+          python3 -m pip install --break-system-packages -q pymupdf
+      - name: Preflight
+        run: python3 skills/kicad-pcb/scripts/check_env.py
+      - name: KiCad-only board (no Freerouting) - ERC + DRC/parity must be clean
+        run: xvfb-run -a python3 skills/kicad-pcb/scripts/simple_board.py --out simple-out
+      - name: Install Freerouting (linux-x64 bundle into ~/Work/tools, auto-detected)
+        run: |
+          mkdir -p ~/Work/tools
+          curl -sSfL -o /tmp/fr.zip https://github.com/freerouting/freerouting/releases/download/v2.4.1/freerouting-2.4.1-linux-x64.zip
+          unzip -q /tmp/fr.zip -d ~/Work/tools/freerouting-2.4.1
+          python3 skills/kicad-pcb/scripts/kicad_paths.py
+      - name: Full example (ESP32 + LED + USB-C) + gate
+        run: |
+          xvfb-run -a python3 skills/kicad-pcb/scripts/esp32_example.py --out out || test $? -eq 4
+          python3 .github/scripts/example_gate.py out
+      - name: Collect renders
+        if: always()
+        run: |
+          mkdir -p renders
+          cp out/renders/* renders/ 2>/dev/null || true
+          cp simple-out/simple-led-3d-top.png simple-out/simple-led-schematic.* renders/ 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-e2e
+          path: |
+            renders/
+            out/esp32-drc.json
+            out/esp32-erc.json
+            simple-out/drc.json
+            simple-out/erc.json
+            simple-out/simple-led-gerbers.zip

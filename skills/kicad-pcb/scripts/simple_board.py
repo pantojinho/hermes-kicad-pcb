@@ -32,6 +32,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import kicad_paths as kp  # noqa: E402
+import sch_gen as sg  # noqa: E402
 
 NAME = "simple-led"
 BOARD_W, BOARD_H = 30.0, 20.0  # mm
@@ -54,8 +55,9 @@ NETS = {
     "R1": {"1": "VIN", "2": "LED_A"},
     "D1": {"2": "LED_A", "1": "GND"},  # LED symbol/footprint: 1 = K, 2 = A
 }
-# schematic placement (mm, y grows DOWN on the sheet)
-SCH_AT = {"J1": (50.8, 76.2), "R1": (88.9, 76.2), "D1": (127.0, 76.2)}
+# schematic placement (mm, y grows DOWN on the sheet; sch_gen snaps to the 1.27 grid)
+SCH_AT = {"J1": (60.96, 76.2), "R1": (91.44, 76.2), "D1": (116.84, 76.2)}
+SCH_BBOX: dict[Path, tuple[float, float, float, float]] = {}
 
 
 def _import_pcbnew():
@@ -97,74 +99,18 @@ def led_resistor(vin: float, vf: float, ma: float) -> str:
 
 # ------------------------------------------------------------------ schematic
 
-def symbols_dir() -> Path:
-    for env in ("KICAD10_SYMBOL_DIR", "KICAD_SYMBOL_DIR"):
-        p = os.environ.get(env)
-        if p and (Path(p) / "Device.kicad_sym").exists():
-            return Path(p)
-    cand = kp.footprints_dir().parent / "symbols"
-    if (cand / "Device.kicad_sym").exists():
-        return cand
-    raise kp.ResolveError("symbols dir", "official KiCad symbol libs not found; set KICAD10_SYMBOL_DIR")
-
-
-def symbol_block(lib_file: Path, name: str) -> str:
-    text = lib_file.read_text(encoding="utf-8", errors="replace")
-    m = re.search(r'\(symbol\s+"%s"' % re.escape(name), text)
-    if not m:
-        raise KeyError(f"symbol {name} not in {lib_file}")
-    depth = 0
-    for j in range(m.start(), len(text)):
-        depth += {"(": 1, ")": -1}.get(text[j], 0)
-        if depth == 0:
-            return text[m.start():j + 1]
-    raise ValueError(f"unbalanced symbol block for {name}")
-
-
-def symbol_pins(block: str) -> dict[str, tuple[float, float]]:
-    """{pin number: (x, y)} in LIBRARY coordinates (y grows UP)."""
-    pins = {}
-    for m in re.finditer(r'\(pin\s+\w+\s+\w+\s+\(at\s+([-0-9.]+)\s+([-0-9.]+)'
-                         r'(?:\s+[-0-9.]+)?\).*?\(number\s+"([^"]+)"', block, re.S):
-        pins.setdefault(m.group(3), (float(m.group(1)), float(m.group(2))))
-    return pins
-
-
 def gen_schematic(outdir: Path, values: dict[str, str], uuids: dict[str, str]) -> Path:
-    symdir = symbols_dir()
-    root = str(uuid.uuid5(uuid.NAMESPACE_URL, NAME))
-    lib_blocks, items = {}, []
+    sch = sg.Schematic(sg.symbols_dir(), NAME, "Simple LED board - headless example")
     for ref, (slib, sym, flib, fp, *_rest) in PARTS.items():
-        block = symbol_block(symdir / f"{slib}.kicad_sym", sym)
-        lib_blocks[f"{slib}:{sym}"] = block.replace(f'(symbol "{sym}"', f'(symbol "{slib}:{sym}"', 1)
         x, y = SCH_AT[ref]
-        pins = symbol_pins(block)
-        pin_uuids = "".join(f'(pin "{n}" (uuid "{uuid.uuid5(uuid.NAMESPACE_URL, ref + n)}"))'
-                            for n in pins)
-        items.append(
-            f'(symbol (lib_id "{slib}:{sym}") (at {x} {y} 0) (unit 1)\n'
-            f'  (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no)\n'
-            f'  (uuid "{uuids[ref]}")\n'
-            f'  (property "Reference" "{ref}" (at {x} {y - 7.62} 0) (effects (font (size 1.27 1.27))))\n'
-            f'  (property "Value" "{values[ref]}" (at {x} {y + 7.62} 0) (effects (font (size 1.27 1.27))))\n'
-            f'  (property "Footprint" "{flib}:{fp}" (at {x} {y} 0) (effects (font (size 1.27 1.27)) (hide yes)))\n'
-            f'  {pin_uuids}\n'
-            f'  (instances (project "{NAME}" (path "/{root}" (reference "{ref}") (unit 1)))))')
-        for pin, net in NETS[ref].items():
-            px, py = pins[pin]
-            # library y is UP, sheet y is DOWN -> subtract
-            lx, ly = x + px, y - py
-            items.append(f'(global_label "{net}" (shape passive) (at {lx:.2f} {ly:.2f} 0)'
-                         f' (effects (font (size 1.27 1.27)) (justify left))'
-                         f' (uuid "{uuid.uuid5(uuid.NAMESPACE_URL, ref + pin + net)}"))')
-    sch = (f'(kicad_sch (version 20260101) (generator "simple_board")\n'
-           f'  (uuid "{root}")\n  (paper "A4")\n'
-           f'  (title_block (title "Simple LED board - headless example"))\n'
-           f'  (lib_symbols\n    {chr(10).join(lib_blocks.values())}\n  )\n'
-           f'  {chr(10).join(items)}\n'
-           f'  (sheet_instances (path "/" (page "1")))\n)\n')
-    dst = outdir / f"{NAME}.kicad_sch"
-    dst.write_text(sch, encoding="utf-8")
+        sch.add(ref, slib, sym, x, y, values[ref], f"{flib}:{fp}", uid=uuids[ref])
+    for ref, pins in NETS.items():
+        for pin, net in pins.items():
+            # J1 is where power enters the board -> PWR_FLAG on its GND
+            sch.connect(ref, pin, net, source=(ref == "J1" and net == "GND"))
+    sch.no_connect_rest()
+    dst = sch.write(outdir / f"{NAME}.kicad_sch")
+    SCH_BBOX[dst] = sch.bbox()
     print(f"[sch] {dst.name}: {len(PARTS)} symbols")
     return dst
 
@@ -296,6 +242,10 @@ def exports(cli: str, outdir: Path) -> None:
          "-o", str(outdir / f"{NAME}-pos.csv"), str(pcb)])
     run([cli, "sch", "export", "bom", "-o", str(outdir / f"{NAME}-bom.csv"), str(sch)])
     run([cli, "sch", "export", "pdf", "-o", str(outdir / f"{NAME}-schematic.pdf"), str(sch)])
+    svg = outdir / f"{NAME}-schematic.svg"
+    if sch in SCH_BBOX and sg.export_svg(cli, sch, svg, SCH_BBOX[sch]):
+        png = sg.svg_to_png(svg, svg.with_suffix(".png"))
+        print(f"[sch] {svg.name} (cropped){' + png' if png else ''}")
     files = sorted(p for p in fab.iterdir() if p.is_file())
     with zipfile.ZipFile(outdir / f"{NAME}-gerbers.zip", "w", zipfile.ZIP_DEFLATED) as z:
         for p in files:
