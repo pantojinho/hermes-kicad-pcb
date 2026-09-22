@@ -39,16 +39,22 @@ jobs:
           python-version: "3.12"
       - name: Install KiCad (winget)
         run: winget install --id KiCad.KiCad -e --accept-source-agreements --accept-package-agreements
-      - name: Install Freerouting (winget)
-        run: winget install --id Freerouting.Freerouting -e --accept-source-agreements --accept-package-agreements
+      - name: Install Freerouting (official MSI from GitHub releases)
+        shell: pwsh
+        run: |
+          $url = "https://github.com/freerouting/freerouting/releases/download/v2.4.1/freerouting-2.4.1-windows-x64.msi"
+          Invoke-WebRequest -Uri $url -OutFile freerouting.msi
+          Start-Process msiexec -ArgumentList '/i','freerouting.msi','/qn' -Wait
+          "FREEROUTING_DIR=C:\Program Files\Freerouting" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Locate tools on PATH (refresh env)
         shell: pwsh
         run: |
           $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
           "KICAD_CLI=$((Get-Command kicad-cli -ErrorAction SilentlyContinue).Source)"
-          "FREEROUTING=$((Get-Command freerouting -ErrorAction SilentlyContinue).Source)"
-          (Get-Command kicad-cli).Source | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-          if (Get-Command freerouting -ErrorAction SilentlyContinue) { (Get-Command freerouting).Source | Split-Path | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8 }
+          (Get-Command kicad-cli).Source | Split-Path | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          $fr = Get-ChildItem "C:\Program Files\Freerouting" -Recurse -Filter freerouting.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($fr) { "FREEROUTING_EXE=$($fr.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
+          "FREEROUTING_EXE=$($fr.FullName)"
       - name: Full example (ESP32 + LED + USB-C)
         shell: pwsh
         run: |
