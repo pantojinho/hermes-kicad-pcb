@@ -148,6 +148,24 @@ The [official GPT-6 Astra example](https://openai.com/pt-BR/index/gpt-6-astra/) 
 9. Ship libraries with the project (sym-lib-table / fp-lib-table via ${KIPRJMOD}).
 10. Run ERC, DRC, unconnected and schematic-parity checks together; review all warnings and documented exceptions. A zero-item report does not certify electrical safety, RF behavior or factory fit. Export production files only after the project's independent review and release gate.
 
+## Visual feedback loop (mandatory before release)
+
+Every board iteration MUST be checked with vision against reality, not just DRC:
+1. Render the board (`kicad-cli pcb render --quality high`, top AND bottom) and export the STEP with real 3D models (`scripts/attach_easyeda_3d.py`).
+2. Look at the render with vision and audit: connectors on board edges with openings facing outward; antennas clear of copper AND parts; rotations aligned to natural trace flow and pick-and-place; decoupling caps at their IC's power pins; user-facing items (LEDs, buttons) at reachable edges.
+3. Compare against REAL photos of commercial equivalents (vendor docs, review photos). Known-good baselines: Espressif ESP32-DevKitC V4 (EN + Boot buttons, USB-UART bridge, power LED, dual I/O headers), official datasheet layout guidance (docs.espressif.com PCB Layout Design).
+4. Copy proven blocks from real designs (open-source dev boards, vendor EVMs) and modify — a layout pattern that already shipped beats a novel one.
+5. Record the gap list found by comparison and use it as the next iteration's task list.
+
+## EasyEDA 3D models
+
+`easyeda_bridge.py lcsc Cxxxxx` downloads symbol + footprint + 3D (WRL+STEP) via
+`easyeda2kicad`. Then `scripts/attach_easyeda_3d.py board.kicad_pcb --map REF=model.step
+--step out.step --render out.png` attaches models and exports the board-level STEP.
+ALWAYS verify the downloaded model name matches the footprint package (model names
+carry the package, e.g. `SOT-223-4P_L6.5-W3.5-H1.6-LS7.0-P2.30`, `R0603`) — a
+mismatched shell corrupts the STEP and hides mechanical conflicts.
+
 ## Raw pcbnew calls (quick reference)
 
 ```python
