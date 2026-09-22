@@ -1,0 +1,27 @@
+name: ci
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  cross-platform-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Sintaxe dos scripts (ambos os SO)
+        run: >
+          python -m py_compile
+          skills/kicad-pcb/scripts/kicad_paths.py
+          skills/kicad-pcb/scripts/demo_autoroute.py
+          skills/kicad-pcb/scripts/check_env.py
+      - name: Frontmatter do SKILL.md (parse YAML real)
+        run: |
+          pip install pyyaml -q
+          python -c "import yaml; from pathlib import Path; t = Path('skills/kicad-pcb/SKILL.md').read_text(encoding='utf-8'); d = yaml.safe_load(t.split('---')[1]); assert d.get('name') == 'kicad-pcb', 'name errado'; assert d.get('description') and len(str(d['description'])) <= 1024, 'description ausente ou > 1024'; print('frontmatter OK:', d['name'])"
+      - name: check_env (informativo — runner sem KiCad deve falhar com mensagens uteis)
+        run: python skills/kicad-pcb/scripts/check_env.py

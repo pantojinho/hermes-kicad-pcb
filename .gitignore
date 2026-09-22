@@ -1,0 +1,12 @@
+# artefatos gerados pelo pipeline de validacao
+demo-unrouted.kicad_pcb
+demo-routed.kicad_pcb
+demo.dsn
+demo.ses
+demo-drc.json
+demo-*.kicad_prl
+demo-*.kicad_pro
+*.kicad_prl
+*-bak/
+*.kicad_pcb-bak
+__pycache__/
