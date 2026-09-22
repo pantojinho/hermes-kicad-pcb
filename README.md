@@ -20,6 +20,12 @@ hermes skills install pantojinho/hermes-kicad-pcb/kicad-pcb
 npx skills add pantojinho/hermes-kicad-pcb
 ```
 
+> **Hermes security scan**: the Hermes skills scanner may flag this skill as
+> CAUTION (reads of `os.environ` + `subprocess` calls — inherent to a skill that
+> orchestrates kicad-cli/Freerouting/pcbnew; no network access, no `shell=True`,
+> no dynamic commands). Review with `hermes skills inspect
+> pantojinho/hermes-kicad-pcb/kicad-pcb` and install with `--force` if you agree.
+
 ## Requirements
 
 | Component | Linux | Windows | macOS |
