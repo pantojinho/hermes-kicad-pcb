@@ -110,6 +110,7 @@ def gen_schematic(outdir: Path, values: dict[str, str], uuids: dict[str, str]) -
             sch.connect(ref, pin, net, source=(ref == "J1" and net == "GND"))
     sch.no_connect_rest()
     dst = sch.write(outdir / f"{NAME}.kicad_sch")
+    sg.write_lib_tables(outdir, sch.sym_libs(), {v[2] for v in PARTS.values()})
     SCH_BBOX[dst] = sch.bbox()
     print(f"[sch] {dst.name}: {len(PARTS)} symbols")
     return dst

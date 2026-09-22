@@ -160,6 +160,7 @@ def gen_schematic(outdir: Path) -> Path:
         sch.taken[sch.parts[ref].pin_xy(pin)] = "(open)"
     n_nc = sch.no_connect_rest()
     dst = sch.write(outdir / SCH)
+    sg.write_lib_tables(outdir, sch.sym_libs(), {lib for lib, *_ in PLACEMENT})
     SCH_BBOX[:] = [sch.bbox()]
     print(f"[sch] schematic written: {dst} ({len(sch.parts)} symbols, {n_nc} no-connect flags)")
     return dst

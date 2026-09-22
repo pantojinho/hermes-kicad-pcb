@@ -343,6 +343,9 @@ class Schematic:
         xs0, ys0, xs1, ys1 = zip(*self.extents)
         return min(xs0) - margin, min(ys0) - margin, max(xs1) + margin, max(ys1) + margin
 
+    def sym_libs(self) -> set[str]:
+        return {k.split(":", 1)[0] for k in self.lib}
+
     def write(self, path: Path) -> Path:
         libs = "\n    ".join(s.block for s in self.lib.values())
         body = "\n  ".join(self.items)
@@ -353,6 +356,23 @@ class Schematic:
             f'  (lib_symbols\n    {libs}\n  )\n  {body}\n'
             f'  (sheet_instances (path "/" (page "1")))\n)\n', encoding="utf-8")
         return path
+
+
+# ------------------------------------------------------------------ project libs
+
+def write_lib_tables(outdir: Path, sym_libs, fp_libs) -> None:
+    """Project-local sym-lib-table / fp-lib-table for the libraries a design uses.
+    A fresh KiCad install (CI runners, new machines) has NO global tables until the
+    GUI runs once, and ERC/DRC then report lib_symbol_issues / lib_footprint_issues.
+    Paths use KiCad's own install variables, so the project stays portable."""
+    def table(kind: str, var: str, libs, ext: str) -> str:
+        rows = "\n".join(f'  (lib (name "{n}") (type "KiCad") (uri "${{{var}}}/{n}{ext}") '
+                         f'(options "") (descr ""))' for n in sorted(set(libs)))
+        return f"({kind}\n  (version 7)\n{rows}\n)\n"
+    (outdir / "sym-lib-table").write_text(
+        table("sym_lib_table", "KICAD10_SYMBOL_DIR", sym_libs, ".kicad_sym"), encoding="utf-8")
+    (outdir / "fp-lib-table").write_text(
+        table("fp_lib_table", "KICAD10_FOOTPRINT_DIR", fp_libs, ".pretty"), encoding="utf-8")
 
 
 # ------------------------------------------------------------------ images

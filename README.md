@@ -85,7 +85,7 @@ Optional env overrides: `KICAD_PYTHON`, `KICAD_CLI`,
 
 | File | Purpose |
 |---|---|
-| `skills/kicad-pcb/SKILL.md` | Reviewed-design workflow + headless pipelines + 18 pitfalls |
+| `skills/kicad-pcb/SKILL.md` | Reviewed-design workflow + headless pipelines + 19 pitfalls |
 | `skills/kicad-pcb/references/api-cheatsheet.md` | Verified pcbnew Python calls (KiCad 10.0.6) + Freerouting bundle-first guide |
 | `skills/kicad-pcb/references/jlcpcb-rules.md` | JLCPCB fab/assembly rules + PCBA BOM/CPL upload workflow |
 | `skills/kicad-pcb/scripts/kicad_paths.py` | Cross-platform tool resolvers (env > known paths > PATH) |

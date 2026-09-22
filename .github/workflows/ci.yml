@@ -45,7 +45,17 @@ jobs:
           winget install --id KiCad.KiCad -e --accept-source-agreements --accept-package-agreements
           python -m pip install pymupdf -q
       - name: KiCad-only board (no Freerouting) - ERC + DRC/parity must be clean
-        run: python skills/kicad-pcb/scripts/simple_board.py --out simple-out
+        shell: pwsh
+        run: |
+          # native exit codes are handled here, not turned into exceptions by pwsh
+          $PSNativeCommandUseErrorActionPreference = $false
+          python skills/kicad-pcb/scripts/simple_board.py --out simple-out *> simple.log
+          $rc = $LASTEXITCODE; Get-Content simple.log
+          if ($rc -ne 0) {
+            # logs need a GitHub login; annotations are public -> surface the tail there
+            "::error title=simple_board.py exit $rc::" + ((Get-Content simple.log -Tail 30) -join '%0A')
+            exit $rc
+          }
       - name: Install Freerouting (official MSI from GitHub releases)
         shell: pwsh
         run: |
@@ -62,9 +72,19 @@ jobs:
         # exit 4 = DRC findings present; the gate decides which ones are allowed.
         shell: pwsh
         run: |
-          python skills/kicad-pcb/scripts/esp32_example.py --out out
-          if ($LASTEXITCODE -notin 0, 4) { exit $LASTEXITCODE }
-          python .github/scripts/example_gate.py out
+          # native exit codes are handled here, not turned into exceptions by pwsh
+          $PSNativeCommandUseErrorActionPreference = $false
+          python skills/kicad-pcb/scripts/esp32_example.py --out out *> esp32.log
+          $rc = $LASTEXITCODE; Get-Content esp32.log
+          if ($rc -eq 4) { $rc = 0 }  # DRC findings: the gate below decides
+          if ($rc -ne 0) {
+            # logs need a GitHub login; annotations are public -> surface the tail there
+            "::error title=esp32_example.py exit $rc::" + ((Get-Content esp32.log -Tail 30) -join '%0A')
+            exit $rc
+          }
+          python .github/scripts/example_gate.py out *> gate.log
+          $rc = $LASTEXITCODE; Get-Content gate.log
+          if ($rc -ne 0) { "::error title=example_gate::" + ((Get-Content gate.log) -join '%0A'); exit $rc }
       - name: Collect renders
         if: always()
         shell: pwsh
@@ -99,7 +119,15 @@ jobs:
       - name: Preflight
         run: python3 skills/kicad-pcb/scripts/check_env.py
       - name: KiCad-only board (no Freerouting) - ERC + DRC/parity must be clean
-        run: xvfb-run -a python3 skills/kicad-pcb/scripts/simple_board.py --out simple-out
+        run: |
+          # logs need a GitHub login; annotations are public -> surface the tail there
+          tail_note() { tail -30 "$1" | awk 'BEGIN{ORS="%0A"} {gsub(/%/,"%25"); print}'; }
+          rc=0
+          xvfb-run -a python3 skills/kicad-pcb/scripts/simple_board.py --out simple-out > simple.log 2>&1 || rc=$?
+          cat simple.log
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=simple_board.py exit $rc::$(tail_note simple.log)"; exit "$rc"
+          fi
       - name: Install Freerouting (linux-x64 bundle into ~/Work/tools, auto-detected)
         run: |
           mkdir -p ~/Work/tools
@@ -108,8 +136,20 @@ jobs:
           python3 skills/kicad-pcb/scripts/kicad_paths.py
       - name: Full example (ESP32 + LED + USB-C) + gate
         run: |
-          xvfb-run -a python3 skills/kicad-pcb/scripts/esp32_example.py --out out || test $? -eq 4
-          python3 .github/scripts/example_gate.py out
+          tail_note() { tail -30 "$1" | awk 'BEGIN{ORS="%0A"} {gsub(/%/,"%25"); print}'; }
+          rc=0
+          xvfb-run -a python3 skills/kicad-pcb/scripts/esp32_example.py --out out > esp32.log 2>&1 || rc=$?
+          cat esp32.log
+          [ "$rc" -eq 4 ] && rc=0  # DRC findings: the gate below decides
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=esp32_example.py exit $rc::$(tail_note esp32.log)"; exit "$rc"
+          fi
+          rc=0
+          python3 .github/scripts/example_gate.py out > gate.log 2>&1 || rc=$?
+          cat gate.log
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=example_gate::$(tail_note gate.log)"; exit "$rc"
+          fi
       - name: Collect renders
         if: always()
         run: |

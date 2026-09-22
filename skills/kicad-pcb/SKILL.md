@@ -140,6 +140,15 @@ nothing to configure.
     (`unconnected-(U1-SDI{slash}SD1-Pad22)`). `pcb drc --schematic-parity` and custom
     rules are looked up by the BOARD's file name: copy `.kicad_sch` / `.kicad_dru` next
     to a renamed board (e.g. `*-routed.kicad_pcb`), or parity silently checks nothing.
+19. Fresh installs (CI runners, a new laptop) have NO global `sym-lib-table` /
+    `fp-lib-table` until the KiCad GUI runs once: ERC/DRC then report
+    `lib_symbol_issues` / `lib_footprint_issues` / `footprint_link_issues` for every
+    part, although your own machine is clean. Always write project-local tables
+    (`sch_gen.write_lib_tables`, URIs via `${KICAD10_SYMBOL_DIR}` /
+    `${KICAD10_FOOTPRINT_DIR}`). Reproduce locally with an empty `KICAD_CONFIG_HOME`.
+    On GitHub Actions: logs need a login but annotations are public — emit
+    `::error::` with the output tail; pwsh turns native exit codes into exit 1 unless
+    `$PSNativeCommandUseErrorActionPreference = $false`.
 
 ## JLCPCB-class fab rules (2-layer)
 
