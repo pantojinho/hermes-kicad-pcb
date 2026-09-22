@@ -128,12 +128,11 @@ pours → DRC with schematic parity → renders. Same result on Linux and Window
 ---|---
 ![3D render](assets/example-3d.png) | ![Schematic](assets/example-schematic.svg)
 
-DRC: **0 errors, 0 unconnected, 0 schematic-parity items**. Findings that remain
-visible on purpose (and are the only ones the CI gate accepts):
-- 4× `hole_clearance` (0.194 mm vs 0.25 mm) inside the GCT USB4105 library
-  footprint itself — its NPTH alignment pegs next to its own GND pads, per the
-  maker's land pattern. Confirm against your fab's NPTH-to-copper limit rather than
-  relaxing the rule.
+DRC: **0 errors, 0 unconnected, 0 schematic-parity items → PASS**. What remains is
+documented, never blanket-ignored (and is all the CI gate accepts):
+- 4× `hole_clearance` (0.194 mm vs 0.25 mm) inside the GCT USB4105 vendor footprint —
+  its NPTH pegs next to its own GND pads, by manufacturer geometry. Reviewed exception
+  with its justification in `REVIEWED_WARNINGS` (`esp32_example.py`).
 - ERC on U1 EN (pin 3): left open so it stays flagged — a real ESP32 board needs an
   EN RC (10 kΩ pull-up + 1 µF) and usually a BOOT button; this example only
   demonstrates the headless pipeline.
