@@ -56,12 +56,14 @@ def main() -> int:
 
     print(f"System: {OSNAME} | python: {sys.version.split()[0]} ({sys.executable})\n")
     ok_all = True
+    missing: set[str] = set()
     for name, fn in CHECKS:
         try:
             val = fn()
             print(f"  OK  {name:16} -> {val}")
         except Exception as e:  # noqa: BLE001 — preflight must list everything
             ok_all = False
+            missing.add(name)
             print(f"  X   {name:16} -> {e}")
     print()
     if ok_all:
@@ -69,6 +71,9 @@ def main() -> int:
               "python3 demo_autoroute.py (full pipeline through DRC).")
     else:
         print("Missing components above (see the fix hints on each line).")
+        if not missing - {"freerouting"}:
+            print("KiCad itself is complete: `python simple_board.py` builds a full board "
+                  "(ERC/DRC/gerbers) without Freerouting.")
     return 0 if (ok_all or not args.strict) else 1
 
 

@@ -220,7 +220,7 @@ def gen_schematic(outdir: Path) -> Path:
             if lref != ref or pin not in pins:
                 continue
             px, py = pins[pin]
-            lx, ly = x + px, y + py
+            lx, ly = x + px, y - py  # library y is UP, sheet y is DOWN
             if spec.endswith(":g"):
                 labels_sx.append(f'(global_label "{spec[:-2]}" (shape input) (at {lx:.2f} {ly:.2f} 0)'
                                  f' (effects (font (size 1.27 1.27))) (uuid "00000000-0000-0000-0000-0000000000{lref[1]}"))')

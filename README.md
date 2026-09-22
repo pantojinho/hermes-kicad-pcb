@@ -49,6 +49,10 @@ python skills/kicad-pcb/scripts/check_env.py        # report + how to fix what's
 ## Quick start
 
 ```bash
+# smallest end-to-end board — needs ONLY KiCad 10 (no Freerouting, no Java):
+# schematic + board + ERC + DRC/parity + gerbers zip + 3D render (exit 0 = PASS)
+python skills/kicad-pcb/scripts/simple_board.py --out ./led-board
+
 # reference pipeline: board -> DSN -> Freerouting -> SES -> DRC (exit 0 = PASS)
 python skills/kicad-pcb/scripts/demo_autoroute.py --out /tmp/pcb-demo
 
@@ -85,6 +89,7 @@ Optional env overrides: `KICAD_PYTHON`, `KICAD_CLI`,
 | `skills/kicad-pcb/references/api-cheatsheet.md` | Verified pcbnew Python calls (KiCad 10.0.6) + Freerouting bundle-first guide |
 | `skills/kicad-pcb/references/jlcpcb-rules.md` | JLCPCB fab/assembly rules + PCBA BOM/CPL upload workflow |
 | `skills/kicad-pcb/scripts/kicad_paths.py` | Cross-platform tool resolvers (env > known paths > PATH) |
+| `skills/kicad-pcb/scripts/simple_board.py` | KiCad-only LED board: schematic + board + ERC/DRC/parity + fab zip + renders |
 | `skills/kicad-pcb/scripts/demo_autoroute.py` | One-shot pipeline: board → DSN → Freerouting → SES → DRC |
 | `skills/kicad-pcb/scripts/esp32_example.py` | Full example: ESP32+LED+USB-C schematic + board + autoroute + renders |
 | `skills/kicad-pcb/scripts/easyeda_bridge.py` | EasyEDA Std/Pro PCB import + LCSC parts → KiCad |
