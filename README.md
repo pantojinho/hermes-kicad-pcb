@@ -1,6 +1,6 @@
 # kicad-pcb — KiCad PCB automation for Hermes Agent
 
-[![skills.sh](https://skills.sh/b/pantojinho/hermes-kicad-pcb)](https://skills.sh/pantojinho/hermes-kicad-pcb)
+[![skills.sh](https://www.skills.sh/b/pantojinho/hermes-kicad-pcb)](https://www.skills.sh/pantojinho/hermes-kicad-pcb)
 [![ci](https://github.com/pantojinho/hermes-kicad-pcb/actions/workflows/ci.yml/badge.svg)](https://github.com/pantojinho/hermes-kicad-pcb/actions/workflows/ci.yml)
 
 Headless PCB design skill for **Linux, Windows and macOS**: native schematics,
@@ -158,6 +158,35 @@ Three entry points, all validated end-to-end on Linux (KiCad 10.0.6):
 - `import-std` with EasyEDA Standard JSON: tracks, vias, pads, nets and outline
   convert; copper areas arrive misplaced (canvas-offset) — re-create zones.
 - `lcsc C14663`: full library drop (symbol + footprint + 3D wrl/step).
+
+## EasyEDA vs KiCad — what's different
+
+EasyEDA (prints below) is a browser-first EDA suite tightly integrated with the
+LCSC/JLCPCB supply chain: parts, prices and PCBA quoting live inside the editor.
+KiCad is a local, open toolchain with deep scripting (`pcbnew` Python, `kicad-cli`) —
+which is what makes headless agent automation possible at all.
+
+| | EasyEDA (Std / Pro) | KiCad 10 |
+|---|---|---|
+| Where it runs | Browser / desktop wrapper | Local app + CLI |
+| Files | `easyeda/sources/...json`, `.epro` | `.kicad_sch` / `.kicad_pcb` / `.kicad_pro` (s-expr, git-friendly) |
+| Parts + prices | LCSC/JLCPCB built into the editor | Official libs + LCSC via `easyeda2kicad` |
+| 3D models | Auto-attached per LCSC part | `kicad-library-3d`, or LCSC STEP via `attach_easyeda_3d.py` |
+| Automation | GUI-first; no headless schematic/board API | `pcbnew` Python + `kicad-cli` + Freerouting (DSN/SES) |
+| Fab handoff | JLCPCB quoting in-app | gerber/drill/BOM/CPL export (see `references/jlcpcb-rules.md`) |
+
+EasyEDA editor (note the **LCSC Parts** + **JLCPCB** library tabs) | KiCad wearing EasyEDA/LCSC 3D models
+---|---
+![EasyEDA web editor with the integrated LCSC/JLCPCB libraries](assets/easyeda-editor.png) | ![KiCad board with EasyEDA/LCSC STEP models attached](assets/kicad-with-easyeda-3d.png)
+
+![EasyEDA home](assets/easyeda-home.png)
+
+This skill bridges **EasyEDA → KiCad**, one way: `import-pro` / `import-std` bring
+PCB geometry into `.kicad_pcb`, and `lcsc Cxxxxx` + `attach_easyeda_3d.py` bring
+EasyEDA/LCSC symbols, footprints and 3D models in. The board on the right is the
+ESP32 dev board generated headless in KiCad and then dressed with the EasyEDA/LCSC
+STEP models (ESP32-WROOM-32-N4, SOT-223, USB-C, LED/R/C chip parts) — verified
+package-by-package before attach.
 
 ## Companion skills
 
