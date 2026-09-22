@@ -45,29 +45,25 @@ jobs:
           $url = "https://github.com/freerouting/freerouting/releases/download/v2.4.1/freerouting-2.4.1-windows-x64.msi"
           Invoke-WebRequest -Uri $url -OutFile freerouting.msi
           Start-Process msiexec -ArgumentList '/i','freerouting.msi','/qn' -Wait
-          "FREEROUTING_DIR=C:\Program Files\Freerouting" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - name: Locate tools on PATH (refresh env)
-        shell: pwsh
-        run: |
-          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-          "KICAD_CLI=$((Get-Command kicad-cli -ErrorAction SilentlyContinue).Source)"
-          (Get-Command kicad-cli).Source | Split-Path | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           $fr = Get-ChildItem "C:\Program Files\Freerouting" -Recurse -Filter freerouting.exe -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($fr) { "FREEROUTING_EXE=$($fr.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
           "FREEROUTING_EXE=$($fr.FullName)"
       - name: Full example (ESP32 + LED + USB-C)
+        # NOTE: kicad-cli is NOT on PATH (KiCad installer does not add bin\),
+        # but the scripts resolve C:\Program Files\KiCad\*\bin\ themselves.
         shell: pwsh
-        run: |
-          $env:Path += ";C:\Program Files\KiCad\10.0\bin"
-          python skills/kicad-pcb/scripts/esp32_example.py --out out --stage board
+        run: python skills/kicad-pcb/scripts/esp32_example.py --out out
       - name: Rename Windows renders
         shell: pwsh
         run: |
-          Move-Item out/renders/board-top.png example-3d-windows.png -Force
-          Move-Item out/renders/schematic.png example-schematic-windows.png -Force
+          if (Test-Path out/renders/board-top.png) { Move-Item out/renders/board-top.png example-3d-windows.png -Force } else { "3D render skipped on this runner" }
+          if (Test-Path out/renders/schematic.png) { Move-Item out/renders/schematic.png example-schematic-windows.png -Force } else { "schematic png skipped (pdf-only)" }
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-renders
+          name: windows-e2e
+          if-no-files-found: error
           path: |
             example-3d-windows.png
             example-schematic-windows.png
+            out/esp32-drc.json
+            out/esp32-routed.kicad_pcb

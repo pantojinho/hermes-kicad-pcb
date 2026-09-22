@@ -116,9 +116,13 @@ Linux; end-to-end headless).
 
 ## EasyEDA import (validated)
 
-`import-pro` was validated with a real EasyEDA Pro board (45 footprints, 1068 tracks):
-geometry, nets, zones and outline convert losslessly (DRC: 0 unconnected / 0 parity;
-the 498 rule violations are the source project's own design rules, not import loss).
+Three entry points, all validated end-to-end on Linux (KiCad 10.0.6):
+- `import-pro` with a real EasyEDA Pro board (45 footprints, 1068 tracks):
+  geometry, nets, zones and outline convert losslessly (DRC: 0 unconnected /
+  0 parity; the 498 rule violations are the source project's own design rules).
+- `import-std` with EasyEDA Standard JSON: tracks, vias, pads, nets and outline
+  convert; copper areas arrive misplaced (canvas-offset) — re-create zones.
+- `lcsc C14663`: full library drop (symbol + footprint + 3D wrl/step).
 
 ## Companion skills
 

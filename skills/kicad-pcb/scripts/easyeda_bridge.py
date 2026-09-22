@@ -134,6 +134,7 @@ def cmd_lcsc(args) -> int:
     out_dir = Path(args.out).expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     lib = out_dir / f"{part.lower()}-lib"
+    lib.mkdir(parents=True, exist_ok=True)  # easyeda2kicad requires it to exist
     cmd = [exe, "--lcsc_id", part, "--full", "--output", str(lib / f"{part.lower()}.kicad_sym"),
            "--overwrite"]
     print(f"[lcsc] {' '.join(cmd)}")

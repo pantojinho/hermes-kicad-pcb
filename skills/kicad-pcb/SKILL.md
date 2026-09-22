@@ -77,10 +77,14 @@ nothing to configure.
   a real 45-footprint/1068-track board: geometry, nets, zones and outline come
   through (0 unconnected / 0 parity in DRC). Schematics are NOT converted — re-draw
   them or import via KiCad GUI (File → Import Non-KiCad Project → EasyEDA Pro).
-- `import-std` — EasyEDA **Standard** JSON (`.../easyeda/sources/pcb/document.json`
-  inside the project zip): same `PCB_IO_MGR` route with the `EASYEDA` plugin.
+- `import-std` — EasyEDA **Standard** JSON (`easyeda/sources/pcb/document.json` inside
+  the project zip, or the json itself): tracks, vias, pads, nets and the board
+  outline convert. **Caveat (verified):** COPPER_AREA shapes land as misplaced
+  drawings (canvas-offset conversion is lossy) — after importing a Standard board,
+  re-create its copper zones in KiCad; net names and tracks are fine.
 - `lcsc Cxxxxx` — downloads symbol + footprint + 3D model from LCSC via
   `easyeda2kicad` (optional dependency; graceful error with install hint if absent).
+  Validated: C14663 → sym + pretty + wrl + step.
 - After importing: run `--stage drc` on the output, then route missing nets with the
   autorouter pipeline.
 
