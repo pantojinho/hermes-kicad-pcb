@@ -21,6 +21,7 @@ jobs:
           skills/kicad-pcb/scripts/check_env.py
           skills/kicad-pcb/scripts/easyeda_bridge.py
           skills/kicad-pcb/scripts/esp32_example.py
+          skills/kicad-pcb/scripts/simple_board.py
       - name: SKILL.md frontmatter (real YAML parse)
         run: |
           pip install pyyaml -q
@@ -39,6 +40,15 @@ jobs:
           python-version: "3.12"
       - name: Install KiCad (winget)
         run: winget install --id KiCad.KiCad -e --accept-source-agreements --accept-package-agreements
+      - name: KiCad-only board (no Freerouting) - ERC + DRC/parity must be clean
+        run: python skills/kicad-pcb/scripts/simple_board.py --out simple-out
+      - name: ESP32 schematic ERC - no label may land on the wrong pin
+        shell: pwsh
+        run: |
+          python skills/kicad-pcb/scripts/esp32_example.py --stage sch --out esp-sch
+          $cli = (Get-ChildItem "C:/Program Files/KiCad/*/bin/kicad-cli.exe" | Select-Object -Last 1).FullName
+          & $cli sch erc --format json -o esp-sch/erc.json esp-sch/esp32-devboard.kicad_sch
+          python -c "import json,sys; v=[x['type'] for s in json.load(open('esp-sch/erc.json'))['sheets'] for x in s['violations']]; bad=[t for t in v if t in ('label_dangling','ground_pin_not_ground')]; print(len(v),'ERC findings; wrong-pin indicators:',bad); sys.exit(1 if bad else 0)"
       - name: Install Freerouting (official MSI from GitHub releases)
         shell: pwsh
         run: |
@@ -75,3 +85,7 @@ jobs:
             example-schematic-windows.png
             out/esp32-drc.json
             out/esp32-routed.kicad_pcb
+            simple-out/simple-led-3d-top.png
+            simple-out/simple-led-gerbers.zip
+            simple-out/drc.json
+            simple-out/erc.json

@@ -44,7 +44,12 @@ Environment overrides (all optional):
 # 0) preflight: lists what is missing and HOW to fix it (exit 1 only with --strict)
 python3 skills/kicad-pcb/scripts/check_env.py
 
-# 1) reference pipeline: board -> DSN -> Freerouting -> SES -> DRC (exit 0 = PASS)
+# 1a) smallest end-to-end board, ONLY KiCad needed (no Freerouting/Java):
+#     header -> R -> LED; schematic + board + ERC + DRC with schematic parity
+#     + gerbers/drill zip + BOM/pos + 3D render. Validated on Windows 11 (KiCad 10.0.6).
+python3 skills/kicad-pcb/scripts/simple_board.py --out /tmp/led --vin 5 --led-ma 3
+
+# 1b) reference pipeline: board -> DSN -> Freerouting -> SES -> DRC (exit 0 = PASS)
 python3 skills/kicad-pcb/scripts/demo_autoroute.py --out /tmp/pcb-demo
 
 # 2) full example (ESP32 + LED + USB-C): schematic + board + autoroute + renders
@@ -103,8 +108,23 @@ nothing to configure.
 11. ESP32/RF modules: use the exact module manufacturer's antenna placement and copper/ground keepout guidance. Edge overhang and clearance are package- and board-specific; inspect the return path and enclosure too.
 12. Project-level design rules live in `.kicad_pro`; set track, clearance, via and drill limits from the selected fabricator's current stack/service and the approved net classes. The example's 0.127 mm track and 0.2 mm drill are demo settings, not universal minima.
 13. Bounding-box packing with a gap worked in the ESP32 demo (177 tracks), but it proves neither collision freedom nor electrical, RF, thermal or assembly quality on another board. Inspect courtyards, height, orientation, keepouts and service access.
-14. Schematic generation: format version 20260101 worked on KiCad 10.0.6. Check labels and actual netlist connectivity; investigate each `pin_not_driven` finding against the intended power source instead of suppressing it categorically.
+14. Schematic generation: format version 20260101 worked on KiCad 10.0.6. **Symbol
+    library Y grows UP, sheet Y grows DOWN**: a pin at lib `(px, py)` of a symbol at
+    `(x, y)` sits at `(x + px, y - py)` on the sheet (rotation 0). Adding `py` instead
+    silently lands labels on the wrong pins. Always run `kicad-cli sch erc` and diff
+    `sch export netlist` against the board nets; give symbols an `(instances ...)` block
+    and footprints `SetPath(KIID_PATH("/<symbol uuid>"))` + `SetFPID(LIB_ID(lib, fp))`
+    so `pcb drc --schematic-parity` can match them (see `simple_board.py`). Check labels and actual netlist connectivity; investigate each `pin_not_driven` finding against the intended power source instead of suppressing it categorically.
 15. Imported EasyEDA boards keep the ORIGINAL design rules of the source project — expect DRC violations against KiCad/JLCPCB defaults (a real import showed 498). Triage them; don't blanket-fix.
+16. Edge connectors (USB-C etc.): rotate so the mouth faces OUT and slide the
+    footprint until its `PCB Edge` line (Dwgs.User) sits on the outline — a
+    rot-0 horizontal receptacle points its opening INTO the board. Modules that
+    overhang on purpose (ESP32 antenna) leave silkscreen past the edge: trim it
+    (`silk_edge_clearance`) instead of ignoring the check.
+17. Post-route stitching vias go through BOTH layers: test candidate spots against
+    foreign-net tracks and vias (not only pads) and against vias already placed,
+    or a routing change silently turns into `shorting_items` / `holes_co_located`.
+    KiCad 10: a via's width is per layer, `via.GetWidth(pcbnew.F_Cu)`.
 
 ## JLCPCB-class fab rules (2-layer)
 
@@ -155,7 +175,7 @@ pcbnew.PCB_IO_MGR.Save(pcbnew.PCB_IO_MGR.KICAD_SEXP, "out.kicad_pcb", board)
 ```bash
 kicad-cli pcb drc --format json --output drc.json board.kicad_pcb   # violations/unconnected_items/schematic_parity
 kicad-cli sch erc --format json --output erc.json board.kicad_sch
-kicad-cli pcb export gerbers --output gerbers/ board.kicad_pcb
+kicad-cli pcb export gerbers --layers F.Cu,B.Cu,F.Mask,B.Mask,F.Silkscreen,B.Silkscreen,F.Paste,B.Paste,Edge.Cuts --output gerbers/ board.kicad_pcb
 kicad-cli pcb export drill   --output gerbers/ board.kicad_pcb
 kicad-cli pcb export pos     --output pos.csv board.kicad_pcb
 kicad-cli pcb render --side top --quality high -o top.png board.kicad_pcb   # 3D render PNG

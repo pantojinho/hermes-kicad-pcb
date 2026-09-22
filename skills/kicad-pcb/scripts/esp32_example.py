@@ -51,7 +51,9 @@ BOARD_W, BOARD_H = 45.0, 25.0  # mm (JLCPCB min 6x6)
 # bbox center). The rot-270 WROOM frees the board midsection, so passives sit
 # in the middle column; nothing overlaps the big USB-C / SOT-223 courtyards.
 PLACEMENT = [
-    ("Connector_USB", "USB_C_Receptacle_GCT_USB4105-xx-A_16P_TopMnt_Horizontal", "J1", 5.5, 12.5, 0),
+    # rot 270: the receptacle mouth (footprint +Y) faces the LEFT board edge;
+    # gen_board then slides J1 so its "PCB Edge" line sits on x = 0
+    ("Connector_USB", "USB_C_Receptacle_GCT_USB4105-xx-A_16P_TopMnt_Horizontal", "J1", 5.5, 12.5, 270),
     ("Package_TO_SOT_SMD", "SOT-223-3_TabPin2", "U2", 18.4, 5.0, 0),
     ("Capacitor_SMD", "C_0805_2012Metric", "C1", 22.0, 12.0, 0),
     ("Capacitor_SMD", "C_0805_2012Metric", "C2", 22.0, 16.0, 0),
@@ -64,6 +66,15 @@ PLACEMENT = [
     # the board interior (x 3.3-24.3) and blocks every zone fill + DRC item.
     ("RF_Module", "ESP32-WROOM-32", "U1", 34.7, 12.5, 270),
 ]
+# connectors whose footprint carries a "PCB Edge" line on Dwgs.User: that line
+# is moved onto the left board edge so the plug opening faces outwards
+EDGE_MOUNT = {"J1"}
+REF_BELOW = {"U2"}
+# modules that overhang the board on purpose (antenna past the edge): their
+# silkscreen outline is trimmed to the board, as the fab cannot print it anyway
+OVERHANG = {"U1"}
+SILK_EDGE_MARGIN = 0.3  # mm between trimmed silkscreen and the board edge  # parts near the top edge: silkscreen reference goes under them
+
 # zone x-limit: cover the WROOM's GND pads (up to x=44) but keep 1mm from the
 # board edge; the module's antenna keepout is OFF-board (module at the edge).
 ZONE_X_MAX = 44.0
@@ -220,7 +231,7 @@ def gen_schematic(outdir: Path) -> Path:
             if lref != ref or pin not in pins:
                 continue
             px, py = pins[pin]
-            lx, ly = x + px, y + py
+            lx, ly = x + px, y - py  # library y is UP, sheet y is DOWN
             if spec.endswith(":g"):
                 labels_sx.append(f'(global_label "{spec[:-2]}" (shape input) (at {lx:.2f} {ly:.2f} 0)'
                                  f' (effects (font (size 1.27 1.27))) (uuid "00000000-0000-0000-0000-0000000000{lref[1]}"))')
@@ -321,6 +332,15 @@ def gen_board(pcbnew, outdir: Path) -> Path:
         if xs and ys:
             cx, cy = (min(xs) + max(xs)) // 2, (min(ys) + max(ys)) // 2
             f.Move(pcbnew.VECTOR2I(int(mm(x)) - cx, int(mm(y)) - cy))
+        if ref in EDGE_MOUNT:
+            align_to_left_edge(pcbnew, f)
+        if ref in OVERHANG:
+            trim_offboard_silk(pcbnew, f)
+        if ref in REF_BELOW:  # default ref text would be clipped by the board edge
+            pads_bb = [p.GetBoundingBox() for p in f.Pads()]
+            cx = (min(b.GetLeft() for b in pads_bb) + max(b.GetRight() for b in pads_bb)) // 2
+            f.Reference().SetPosition(pcbnew.VECTOR2I(
+                cx, max(b.GetBottom() for b in pads_bb) + int(mm(1.2))))
         fps[ref] = f
         matched_pats = set()
         for pad in f.Pads():
@@ -349,10 +369,55 @@ def gen_board(pcbnew, outdir: Path) -> Path:
     return outdir / PCB
 
 
+def align_to_left_edge(pcbnew, f) -> None:
+    """Slide f along X so its vertical "PCB Edge" line (Dwgs.User) lands on x = 0."""
+    xs = [g.GetStart().x for g in f.GraphicalItems()
+          if g.GetLayer() == pcbnew.Dwgs_User and isinstance(g, pcbnew.PCB_SHAPE)
+          and g.GetShape() == pcbnew.SHAPE_T_SEGMENT and g.GetStart().x == g.GetEnd().x]
+    if not xs:
+        sys.exit(f"ERROR: {f.GetReference()} has no vertical PCB Edge line after rotation — "
+                 "check its rotation in PLACEMENT")
+    f.Move(pcbnew.VECTOR2I(-min(xs), 0))
+
+
+def trim_offboard_silk(pcbnew, f) -> None:
+    """Clip f's straight silkscreen segments to the board rectangle (minus a
+    margin); segments left shorter than 0.2 mm are removed. Copper untouched."""
+    mm = pcbnew.FromMM
+    lo_x, lo_y = mm(SILK_EDGE_MARGIN), mm(SILK_EDGE_MARGIN)
+    hi_x, hi_y = mm(BOARD_W - SILK_EDGE_MARGIN), mm(BOARD_H - SILK_EDGE_MARGIN)
+    trimmed = removed = 0
+    for g in list(f.GraphicalItems()):
+        if (g.GetLayer() not in (pcbnew.F_SilkS, pcbnew.B_SilkS)
+                or not isinstance(g, pcbnew.PCB_SHAPE) or g.GetShape() != pcbnew.SHAPE_T_SEGMENT):
+            continue
+        (x1, y1), (x2, y2) = (g.GetStart().x, g.GetStart().y), (g.GetEnd().x, g.GetEnd().y)
+        # Liang-Barsky clip of the segment against the inner rectangle
+        t0, t1, dx, dy = 0.0, 1.0, x2 - x1, y2 - y1
+        for pk, qk in ((-dx, x1 - lo_x), (dx, hi_x - x1), (-dy, y1 - lo_y), (dy, hi_y - y1)):
+            if pk == 0:
+                if qk < 0:
+                    t0, t1 = 1.0, 0.0
+                continue
+            r = qk / pk
+            t0, t1 = (max(t0, r), t1) if pk < 0 else (t0, min(t1, r))
+        if (t0, t1) == (0.0, 1.0):
+            continue
+        if t1 - t0 <= 0 or (t1 - t0) * (dx * dx + dy * dy) ** 0.5 < mm(0.2):
+            f.Remove(g)
+            removed += 1
+            continue
+        g.SetStart(pcbnew.VECTOR2I(int(x1 + t0 * dx), int(y1 + t0 * dy)))
+        g.SetEnd(pcbnew.VECTOR2I(int(x1 + t1 * dx), int(y1 + t1 * dy)))
+        trimmed += 1
+    print(f"[board] {f.GetReference()}: off-board silkscreen trimmed {trimmed}, removed {removed}")
+
+
 def stitch_gnd_vias(pcbnew, board) -> int:
     """Drop a GND via beside every SMD GND pad (F.Cu -> B.Cu zone), only where
-    it fits: candidate positions are checked against every foreign-net pad
-    (grown by clearance) before the via is committed."""
+    it fits: candidate positions are checked against every foreign-net pad,
+    track and via (grown by clearance + via radius) before the via is committed.
+    A through via touches BOTH layers, so B.Cu tracks under an SMD pad count."""
     mm = pcbnew.FromMM
     gnd = board.FindNet("GND")
     if gnd is None:
@@ -368,14 +433,34 @@ def stitch_gnd_vias(pcbnew, board) -> int:
                 bb = pad.GetBoundingBox()
                 foreign.append(bb)
 
+    # foreign-net tracks/vias as (x1, y1, x2, y2, half width); a via is a 0-length segment
+    segs = []
+    for t in board.GetTracks():
+        if t.GetNetname() == "GND":
+            continue
+        a, b = t.GetStart(), t.GetEnd()
+        # KiCad 10: a via's width is per layer (GetWidth() without one asserts)
+        w = t.GetWidth(pcbnew.F_Cu) if t.Type() == pcbnew.PCB_VIA_T else t.GetWidth()
+        segs.append((a.x, a.y, b.x, b.y, w // 2))
+
+    def seg_dist(px: int, py: int, x1: int, y1: int, x2: int, y2: int) -> float:
+        dx, dy = x2 - x1, y2 - y1
+        L2 = dx * dx + dy * dy
+        u = 0.0 if L2 == 0 else max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / L2))
+        return ((px - x1 - u * dx) ** 2 + (py - y1 - u * dy) ** 2) ** 0.5
+
+    keep = clearance + via_r
     def hits_foreign(x: int, y: int) -> bool:
         for bb in foreign:
-            if (bb.GetLeft() - clearance <= x <= bb.GetRight() + clearance
-                    and bb.GetTop() - clearance <= y <= bb.GetBottom() + clearance):
+            if (bb.GetLeft() - keep <= x <= bb.GetRight() + keep
+                    and bb.GetTop() - keep <= y <= bb.GetBottom() + keep):
                 return True
-        return False
+        return any(seg_dist(x, y, x1, y1, x2, y2) < keep + hw
+                   for x1, y1, x2, y2, hw in segs)
 
     n = skipped = 0
+    placed: list[tuple[int, int]] = []  # overlapping pads (USB-C A1/B12) share a spot
+    min_pitch = 2 * via_r + clearance
     for fp in board.GetFootprints():
         for pad in fp.Pads():
             if pad.GetNetname() != "GND" or pad.GetAttribute() != pcbnew.PAD_ATTRIB_SMD:
@@ -388,7 +473,11 @@ def stitch_gnd_vias(pcbnew, board) -> int:
                      (p.x + step, p.y + step), (p.x - step, p.y - step),
                      (p.x, p.y)]  # center as last resort
             for cx, cy in cands:
+                if any(abs(cx - vx) < min_pitch and abs(cy - vy) < min_pitch
+                       for vx, vy in placed):
+                    break  # a stitch via already serves this spot
                 if not hits_foreign(cx, cy):
+                    placed.append((cx, cy))
                     via = pcbnew.PCB_VIA(board)
                     via.SetPosition(pcbnew.VECTOR2I(cx, cy))
                     via.SetNet(gnd)
