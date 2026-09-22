@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Resolucao de caminhos KiCad/Freerouting por SO — sem importar pcbnew.
+"""Cross-platform path resolution for KiCad/Freerouting tools — no pcbnew import needed.
 
-Usado por demo_autoroute.py (shim de re-exec + pipeline) e check_env.py (preflight).
-Ordem de resolucao em toda funcao: variavel de ambiente -> locais conhecidos por SO -> PATH.
-Tudo pathlib; nenhum separador hardcoded em strings.
+Used by demo_autoroute.py (re-exec shim + pipeline) and check_env.py (preflight).
+Resolution order in every function: environment variable -> known per-OS locations -> PATH.
+All pathlib; no hardcoded separators in strings.
 """
 from __future__ import annotations
 
@@ -19,21 +19,21 @@ IS_WIN = os.name == "nt"
 IS_MAC = platform.system() == "Darwin"
 IS_LINUX = platform.system() == "Linux"
 
-FOOTPRINT_PROBE = "Resistor_SMD.pretty"  # marca de libs oficiais instaladas
+FOOTPRINT_PROBE = "Resistor_SMD.pretty"  # marker that official libs are installed
 
 
 class ResolveError(Exception):
-    """Componente nao encontrado — .fix traz a instrucao de correcao por SO."""
+    """Component not found — .fix carries the per-OS repair instruction."""
 
     def __init__(self, component: str, fix: str):
         self.component, self.fix = component, fix
-        super().__init__(f"{component}: nao encontrado. {fix}")
+        super().__init__(f"{component}: not found. {fix}")
 
 
 # ---------------------------------------------------------------- python+pcbnew
 
 def python_with_pcbnew_candidates() -> list[Path]:
-    """Interpretes que provavelmente tem os bindings pcbnew."""
+    """Interpreters that are likely to have the pcbnew bindings."""
     out: list[Path] = []
     env = os.environ.get("KICAD_PYTHON")
     if env:
@@ -47,14 +47,14 @@ def python_with_pcbnew_candidates() -> list[Path]:
     elif IS_MAC:
         out += sorted(Path("/Applications/KiCad").glob(
             "KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3"))
-    else:  # linux: distro/PPA instala pcbnew no python do sistema
+    else:  # linux: distro/PPA packages install pcbnew into the system python
         out.append(Path(sys.executable))
         out += [Path(p) for p in ("/usr/bin/python3",)]
     return out
 
 
 def verify_pcbnew(python: Path, timeout: int = 60) -> str | None:
-    """Roda `import pcbnew` no interprete; devolve a versao ou None."""
+    """Runs `import pcbnew` in the interpreter; returns its version or None."""
     try:
         r = subprocess.run(
             [str(python), "-c", "import pcbnew; print(pcbnew.GetBuildVersion())"],
@@ -69,7 +69,7 @@ def verify_pcbnew(python: Path, timeout: int = 60) -> str | None:
 # ---------------------------------------------------------------- footprints
 
 def footprints_dir() -> Path:
-    """Dir das libs oficiais de footprints (contem Resistor_SMD.pretty)."""
+    """Official footprint libraries dir (contains Resistor_SMD.pretty)."""
     envs = ("KICAD10_FOOTPRINT_DIR", "KICAD9_FOOTPRINT_DIR", "KICAD_FOOTPRINT_DIR")
     for e in envs:
         if os.environ.get(e):
@@ -80,12 +80,12 @@ def footprints_dir() -> Path:
                          Path("/usr/local/share/kicad"),
                          Path.home() / ".local/share/kicad"]
     if IS_WIN:
-        # "+ '/'" ancora o drive: Path("C:") sozinho é drive-RELATIVO no Windows
+        # "+ '/'" anchors the drive: a bare Path("C:") is drive-RELATIVE on Windows
         roots = [Path(os.environ.get("SystemDrive", "C:") + "/") / "Program Files" / "KiCad",
                  Path.home() / "AppData" / "Local" / "Programs" / "KiCad"]
     elif IS_MAC:
         roots = [Path("/Applications/KiCad/KiCad.app/Contents/SharedSupport")]
-    # expande 1 nivel de versao (KiCad/10.0, kicad/10.0) + usa a propria raiz
+    # expand one version level (KiCad/10.0, kicad/10.0) + the root itself
     bases: list[Path] = []
     for r in roots:
         if r.is_dir():
@@ -94,8 +94,8 @@ def footprints_dir() -> Path:
         for p in (b / "share" / "kicad" / "footprints", b / "footprints"):
             if (p / FOOTPRINT_PROBE).is_dir():
                 return p
-    raise ResolveError("footprints dir", "instale as libs oficiais do KiCad 10 e/ou aponte "
-                       f"{'|'.join(envs)}. Raizes: " + ", ".join(str(r) for r in roots))
+    raise ResolveError("footprints dir", "install the official KiCad 10 libraries and/or set "
+                       f"{'|'.join(envs)}. Roots searched: " + ", ".join(str(r) for r in roots))
 
 
 # ---------------------------------------------------------------- kicad-cli
@@ -112,12 +112,12 @@ def kicad_cli() -> Path:
                      Path.home() / "AppData/Local/Programs/KiCad"):
             hits = sorted(root.glob("*/bin/kicad-cli.exe")) if root.is_dir() else []
             if hits:
-                return hits[-1]  # versao mais alta
+                return hits[-1]  # highest version
     if IS_MAC:
         p = Path("/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli")
         if p.exists():
             return p
-    raise ResolveError("kicad-cli", "instale o KiCad 10 (kicad.kicad.org) ou aponte KICAD_CLI")
+    raise ResolveError("kicad-cli", "install KiCad 10 (kicad.kicad.org) or set KICAD_CLI")
 
 
 # ---------------------------------------------------------------- java
@@ -140,15 +140,15 @@ def java(min_major: int = 25) -> Path:
             return p
     raise ResolveError(
         f"java >= {min_major}",
-        f"o jar do Freerouting 2.4.1 exige Java {min_major}+. Recomendado: use o bundle do seu SO "
-        f"com runtime embutido (freerouting-*-linux-x64.zip / -windows-x64.msi) — nao precisa de "
-        f"Java do sistema. Alternativa: instale Eclipse Temurin {min_major} (adoptium.net).")
+        f"the Freerouting 2.4.1 jar requires Java {min_major}+. Recommended: use the OS bundle "
+        f"with embedded runtime (freerouting-*-linux-x64.zip / -windows-x64.msi) — no system "
+        f"Java needed. Alternative: install Eclipse Temurin {min_major} (adoptium.net).")
 
 
 # ---------------------------------------------------------------- freerouting
 
 def freerouting() -> tuple[str, list[str]]:
-    """Devolve (modo, argv): modo 'exe' (launcher/PATH) ou 'jar' (java -jar ...)."""
+    """Returns (mode, argv): mode 'exe' (bundle launcher/PATH) or 'jar' (java -jar ...)."""
     if os.environ.get("FREEROUTING_EXE"):
         p = Path(os.environ["FREEROUTING_EXE"])
         if p.exists():
@@ -176,7 +176,7 @@ def freerouting() -> tuple[str, list[str]]:
     for pat in exe_globs:
         for hit in sorted(_g.glob(str(pat), recursive=True)):
             if hit.lower().endswith((".exe", "freerouting")) and Path(hit).is_file():
-                try:  # bundle deszipado pode vir sem bit de execucao
+                try:  # unzipped bundles may come without the exec bit
                     Path(hit).chmod(Path(hit).stat().st_mode | 0o111)
                 except OSError:
                     pass
@@ -193,15 +193,15 @@ def freerouting() -> tuple[str, list[str]]:
             return "jar", [str(java()), "-jar", str(hits[-1])]
     raise ResolveError(
         "freerouting",
-        "baixe o bundle do seu SO com runtime embutido em "
+        "download the OS bundle with embedded runtime from "
         "https://github.com/freerouting/freerouting/releases (linux-x64.zip | windows-x64.msi | "
-        "macos-*.dmg), extraia em ~/Work/tools/ (padrao procurado) ou aponte FREEROUTING_EXE / "
-        "FREEROUTING_JAR.")
+        "macos-*.dmg), extract it under ~/Work/tools/ (default searched location) or set "
+        "FREEROUTING_EXE / FREEROUTING_JAR.")
 
 
-if __name__ == "__main__":  # debug rapido: python3 kicad_paths.py
+if __name__ == "__main__":  # quick debug: python3 kicad_paths.py
     for fn in (footprints_dir, kicad_cli, java, freerouting):
         try:
             print(f"{fn.__name__}: {fn()}")
         except ResolveError as e:
-            print(f"{fn.__name__}: FALHOU — {e}")
+            print(f"{fn.__name__}: FAILED — {e}")

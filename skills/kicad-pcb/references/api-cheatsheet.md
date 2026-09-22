@@ -1,71 +1,74 @@
-# pcbnew KiCad 10.0.6 — calls verificados no Linux em 2026-09-21; resolvers cross-platform (smoke em CI)
+# pcbnew KiCad 10.0.6 — calls verified on Linux 2026-09-21; cross-platform resolvers (CI smoke-tested)
 
-Import: qualquer Python que importe `pcbnew` — no Linux distro/PPA é o `python3`
-do sistema; no Windows/macOS é o Python embutido do KiCad (o `demo_autoroute.py`
-re-executa sozinho nele; override: env `KICAD_PYTHON`).
-2–3 asserts `PROPERTY_ENUM` no stderr ao importar = ruído C++ inofensivo, ignore.
+Import: any Python that can `import pcbnew` — on Linux distro/PPA packages it is the
+system `python3`; on Windows/macOS it is KiCad's bundled Python (`demo_autoroute.py`
+re-execs itself there automatically; override with the `KICAD_PYTHON` env var).
+The 2–3 `PROPERTY_ENUM` asserts on stderr at import time are harmless C++ noise — ignore.
 
-Paths NÃO hardcode: use `scripts/kicad_paths.py` (`footprints_dir()`,
-`kicad_cli()`, `freerouting()`) — resolve por SO (env > locais conhecidos > PATH).
-`pcbnew.GetDefaultFootprintsPath()` NÃO existe no 10.0.6.
+Do NOT hardcode paths: use `scripts/kicad_paths.py` (`footprints_dir()`, `kicad_cli()`,
+`freerouting()`) — it resolves per-OS (env var > known locations > PATH).
+`pcbnew.GetDefaultFootprintsPath()` does NOT exist in 10.0.6.
 
-| Ação | Chamada |
+| Action | Call |
 |---|---|
-| Nova placa | `pcbnew.NewBoard(path)` (path OBRIGATÓRIO) |
-| Abrir | `pcbnew.LoadBoard(path)` |
-| Salvar | `board.Save(path)` |
-| Unidades | `mm = pcbnew.FromMM`; coords `pcbnew.VECTOR2I(x_nm, y_nm)` |
-| Formas | `SHAPE_T_RECT`, `SHAPE_T_SEGMENT`, `SHAPE_T_ARC`, `SHAPE_T_CIRCLE`, `SHAPE_T_POLY` (CAIXA ALTA) |
-| Retângulo | `s = pcbnew.PCB_SHAPE(board); s.SetShape(pcbnew.SHAPE_T_RECT); s.SetStart(...); s.SetEnd(...); s.SetLayer(pcbnew.Edge_Cuts); s.SetWidth(mm(0.1)); board.Add(s)` |
-| Carregar FP | `pcbnew.FootprintLoad("<footprints_dir>/<Lib>.pretty", "<nome>")` |
-| Posicionar FP | `f.SetReference("R1"); f.SetPosition(pcbnew.VECTOR2I(...)); f.SetOrientationDegrees(90); board.Add(f)` |
-| Achar FP/pad | `board.FindFootprintByReference("R1")`, `fp.FindPadByNumber("2")` |
-| Criar rede | `net = pcbnew.NETINFO_ITEM(board, "N$1"); board.Add(net)` |
-| Ligar pad | `pad.SetNet(net)` |
-| Trilha | `t = pcbnew.PCB_TRACK(board); t.SetStart(pad1.GetPosition()); t.SetEnd(pad2.GetPosition()); t.SetWidth(mm(0.25)); t.SetLayer(pcbnew.F_Cu); t.SetNetCode(p1.GetNetCode()); board.Add(t)` |
-| Contar | `len(board.GetTracks())`, `len(list(board.GetFootprints()))` (se iterar quebra → patch condicional abaixo) |
+| New board | `pcbnew.NewBoard(path)` (path REQUIRED) |
+| Open | `pcbnew.LoadBoard(path)` |
+| Save | `board.Save(path)` |
+| Units | `mm = pcbnew.FromMM`; coords `pcbnew.VECTOR2I(x_nm, y_nm)` |
+| Shapes | `SHAPE_T_RECT`, `SHAPE_T_SEGMENT`, `SHAPE_T_ARC`, `SHAPE_T_CIRCLE`, `SHAPE_T_POLY` (UPPERCASE) |
+| Rectangle | `s = pcbnew.PCB_SHAPE(board); s.SetShape(pcbnew.SHAPE_T_RECT); s.SetStart(...); s.SetEnd(...); s.SetLayer(pcbnew.Edge_Cuts); s.SetWidth(mm(0.1)); board.Add(s)` |
+| Load footprint | `pcbnew.FootprintLoad("<footprints_dir>/<Lib>.pretty", "<name>")` |
+| Place footprint | `f.SetReference("R1"); f.SetPosition(pcbnew.VECTOR2I(...)); f.SetOrientationDegrees(90); board.Add(f)` |
+| Find FP/pad | `board.FindFootprintByReference("R1")`, `fp.FindPadByNumber("2")` |
+| Create net | `net = pcbnew.NETINFO_ITEM(board, "N$1"); board.Add(net)` |
+| Bind pad | `pad.SetNet(net)` |
+| Track | `t = pcbnew.PCB_TRACK(board); t.SetStart(pad1.GetPosition()); t.SetEnd(pad2.GetPosition()); t.SetWidth(mm(0.25)); t.SetLayer(pcbnew.F_Cu); t.SetNetCode(p1.GetNetCode()); board.Add(t)` |
+| Count | `len(board.GetTracks())`, `len(list(board.GetFootprints()))` (if iteration crashes → conditional patch below) |
 | DSN export | `pcbnew.ExportSpecctraDSN(board, "out.dsn")` → True |
 | SES import | `pcbnew.ImportSpecctraSES(board, "out.ses")` → True |
 | DRC json | `kicad-cli pcb drc --format json --output drc.json board.kicad_pcb` |
+| Import non-KiCad PCB | `board = pcbnew.PCB_IO_MGR.Load(pcbnew.PCB_IO_MGR.EASYEDAPRO, "proj.epro")` (also `EASYEDA`, `EAGLE`, `ALTIUM_DESIGNER`, ...) then `pcbnew.PCB_IO_MGR.Save(pcbnew.PCB_IO_MGR.KICAD_SEXP, "out.kicad_pcb", board)` — see `easyeda_bridge.py` |
 
 ## DRC json shape
 ```json
 {"violations": [{"type": "solder_mask_bridge", "description": "...", "severity": "error"}],
  "unconnected_items": [], "schematic_parity": []}
 ```
-Conte por tipo; `unconnected_items` > 0 = conexão não roteada; `schematic_parity` =
-descompasso sch↔pcb (é o que DRC sozinho não vê). `solder_mask_bridge` em placas
-apertadas = cosmético.
+Count by type; `unconnected_items` > 0 = unrouted connection; `schematic_parity` =
+sch↔pcb mismatch (the check DRC alone does not catch). `solder_mask_bridge` on tight
+boards = cosmetic.
 
 ## Freerouting 2.4.1 (headless)
 
-**Preferir o bundle do SO com runtime embutido** (releases: `linux-x64.zip`,
-`windows-x64.msi`, `macos-*.dmg`) — invoca o launcher direto, ZERO Java do sistema:
+**Prefer the OS bundle with embedded runtime** (releases: `linux-x64.zip`,
+`windows-x64.msi`, `macos-*.dmg`) — invokes the launcher directly, ZERO system Java:
 
 ```bash
-# Linux/macOS (bundle em ~/Work/tools/ é auto-detectado):
+# Linux/macOS (bundle under ~/Work/tools/ is auto-detected):
 ~/Work/tools/freerouting-2.4.1-linux-x64/bin/freerouting -de in.dsn -do out.ses -mp 50 -mt 4
 # Windows (MSI):
 "C:\Program Files\Freerouting\freerouting\freerouting.exe" -de in.dsn -do out.ses -mp 50 -mt 4
 ```
 
-O **jar** solto é fallback e exige **Java 25+** (o 2.4.1 = class file 69; Java 17
-morre com `UnsupportedClassVersionError`):
+The standalone **jar** is the fallback and requires **Java 25+** (2.4.1 = class file 69;
+Java 17 dies with `UnsupportedClassVersionError`):
 ```bash
 java -jar freerouting-2.4.1.jar -de in.dsn -do out.ses -mp 50 -mt 4
 ```
-`-mp` = passes máx, `-mt` = threads. Score 1000 + "0 unrouted" = roteou tudo.
-Placas grandes travando: `-mp 200`, menos threads. Ou deixe os resolvers acharem
-tudo: `python3 demo_autoroute.py --stage route`.
+`-mp` = max passes, `-mt` = threads. Score 1000 + "0 unrouted" = fully routed.
+Large boards stalling: `-mp 200`, fewer threads. Or let the resolvers find everything:
+`python3 demo_autoroute.py --stage route`.
 
-## Patch de compatibilidade — CONDITIONAL (não é instalação padrão)
+## Compatibility patch — CONDITIONAL (not part of a standard install)
 
-Só se iteração crashar com `'SwigPyIterator' object has no attribute 'next'`
-(python 3.14 + bindings antigos, ex. Arch/omarchy). Ache o arquivo:
-`python3 -c "import pcbnew; print(pcbnew.__file__)"` — 3 ocorrências de:
+Only if iteration crashes with `'SwigPyIterator' object has no attribute 'next'`
+(python 3.14 + older bindings, e.g. Arch/omarchy). Find the file:
+`python3 -c "import pcbnew; print(pcbnew.__file__)"` — 3 occurrences of:
 `item = it.next()` → `item = it.__next__() if hasattr(it, '__next__') else it.next()`
-No Ubuntu 24.04 + KiCad 10.0.6 (python 3.12) NÃO precisa de patch.
+On Ubuntu 24.04 + KiCad 10.0.6 (python 3.12) NO patch is needed.
 
-## o que NÃO existe no kicad-cli 10.0.6
-`pcb export dsn`, `pcb import ses` — use as funções Python acima. O kicad-cli tem:
-`pcb {drc,export,import,render,upgrade}`, `sch {erc,export}`, `fp {export svg,upgrade}`, `sym upgrade`.
+## what does NOT exist in kicad-cli 10.0.6
+`pcb export dsn`, `pcb import ses`, `sch import` — use the Python functions above.
+`kicad-cli pcb import` only handles: pads, altium, eagle, cadstar, fabmaster, pcad,
+solidworks (NOT EasyEDA — that one lives in `PCB_IO_MGR` via Python).
+kicad-cli has: `pcb {drc,export,import,render,upgrade}`, `sch {erc,export}`, `fp {export svg,upgrade}`, `sym upgrade`.

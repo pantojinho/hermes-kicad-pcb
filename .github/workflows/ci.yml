@@ -13,15 +13,55 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Sintaxe dos scripts (ambos os SO)
+      - name: Script syntax (both OSes)
         run: >
           python -m py_compile
           skills/kicad-pcb/scripts/kicad_paths.py
           skills/kicad-pcb/scripts/demo_autoroute.py
           skills/kicad-pcb/scripts/check_env.py
-      - name: Frontmatter do SKILL.md (parse YAML real)
+          skills/kicad-pcb/scripts/easyeda_bridge.py
+          skills/kicad-pcb/scripts/esp32_example.py
+      - name: SKILL.md frontmatter (real YAML parse)
         run: |
           pip install pyyaml -q
-          python -c "import yaml; from pathlib import Path; t = Path('skills/kicad-pcb/SKILL.md').read_text(encoding='utf-8'); d = yaml.safe_load(t.split('---')[1]); assert d.get('name') == 'kicad-pcb', 'name errado'; assert d.get('description') and len(str(d['description'])) <= 1024, 'description ausente ou > 1024'; print('frontmatter OK:', d['name'])"
-      - name: check_env (informativo — runner sem KiCad deve falhar com mensagens uteis)
+          python -c "import yaml; from pathlib import Path; t = Path('skills/kicad-pcb/SKILL.md').read_text(encoding='utf-8'); d = yaml.safe_load(t.split('---')[1]); assert d.get('name') == 'kicad-pcb', 'wrong name'; assert d.get('description') and len(str(d['description'])) <= 1024, 'description missing or > 1024'; print('frontmatter OK:', d['name'])"
+      - name: check_env (informational - runner without KiCad must fail with useful messages)
         run: python skills/kicad-pcb/scripts/check_env.py
+
+  windows-e2e:
+    # Real Windows validation: install KiCad + Freerouting, run the full example
+    # (schematic + board + autoroute + 3D render + schematic export), upload renders.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install KiCad (winget)
+        run: winget install --id KiCad.KiCad -e --accept-source-agreements --accept-package-agreements
+      - name: Install Freerouting (winget)
+        run: winget install --id Freerouting.Freerouting -e --accept-source-agreements --accept-package-agreements
+      - name: Locate tools on PATH (refresh env)
+        shell: pwsh
+        run: |
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+          "KICAD_CLI=$((Get-Command kicad-cli -ErrorAction SilentlyContinue).Source)"
+          "FREEROUTING=$((Get-Command freerouting -ErrorAction SilentlyContinue).Source)"
+          (Get-Command kicad-cli).Source | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          if (Get-Command freerouting -ErrorAction SilentlyContinue) { (Get-Command freerouting).Source | Split-Path | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8 }
+      - name: Full example (ESP32 + LED + USB-C)
+        shell: pwsh
+        run: |
+          $env:Path += ";C:\Program Files\KiCad\10.0\bin"
+          python skills/kicad-pcb/scripts/esp32_example.py --out out --stage board
+      - name: Rename Windows renders
+        shell: pwsh
+        run: |
+          Move-Item out/renders/board-top.png example-3d-windows.png -Force
+          Move-Item out/renders/schematic.png example-schematic-windows.png -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-renders
+          path: |
+            example-3d-windows.png
+            example-schematic-windows.png

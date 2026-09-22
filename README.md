@@ -5,10 +5,10 @@
 
 Headless PCB design skill for **Linux, Windows and macOS**: native schematics,
 collision-free placement, Freerouting autorouting (DSN/SES), DRC/ERC verification,
-and gerber/drill/BOM export — the GPT-6 Astra workflow, without the GUI.
-Validated end-to-end on Linux; Windows/macOS via runtime resolvers + CI smoke.
-Every tool and path is resolved at runtime (env var > known location > PATH), so
-the same commands run on any OS.
+gerber/drill/BOM export and **EasyEDA / EasyEDA Pro import** — the GPT-6 Astra
+workflow, without the GUI. Validated end-to-end on Linux; Windows/macOS via runtime
+resolvers + CI smoke. Every tool and path is resolved at runtime (env var > known
+location > PATH), so the same commands run on any OS.
 
 ## Install
 
@@ -33,6 +33,7 @@ npx skills add pantojinho/hermes-kicad-pcb
 | KiCad 10+ (`kicad-cli` + pcbnew bindings) | distro package / PPA | installer (bundled python + bindings) | app bundle |
 | [Freerouting](https://github.com/freerouting/freerouting) | `linux-x64.zip` bundle | `windows-x64.msi` | `macos-*.dmg` |
 | System Java | **not needed** (bundles embed their own runtime) | idem | idem |
+| `easyeda2kicad` (optional, LCSC parts) | `pipx install easyeda2kicad` | idem | idem |
 
 > The plain `freerouting-*.jar` is a fallback and requires **Java 25+** (the 2.4.1
 > jar is compiled for class file 69 — Java 17 fails with `UnsupportedClassVersionError`).
@@ -42,26 +43,35 @@ npx skills add pantojinho/hermes-kicad-pcb
 Quick check on any OS:
 
 ```bash
-python skills/kicad-pcb/scripts/check_env.py        # relatorio + como consertar o que falta
+python skills/kicad-pcb/scripts/check_env.py        # report + how to fix what's missing
 ```
 
 ## Quick start
 
 ```bash
-# pipeline completo: board -> DSN -> Freerouting -> SES -> DRC (exit 0 = PASS)
+# reference pipeline: board -> DSN -> Freerouting -> SES -> DRC (exit 0 = PASS)
 python skills/kicad-pcb/scripts/demo_autoroute.py --out /tmp/pcb-demo
 
-# estagios isolados
+# full example (ESP32 + LED + USB-C): schematic + board + autoroute + renders
+python skills/kicad-pcb/scripts/esp32_example.py --out /tmp/esp32
+
+# import an EasyEDA Pro PCB into KiCad (headless)
+python skills/kicad-pcb/scripts/easyeda_bridge.py import-pro project.epro --out out/
+
+# LCSC part -> KiCad symbol + footprint + 3D (needs easyeda2kicad)
+python skills/kicad-pcb/scripts/easyeda_bridge.py lcsc C2040 --out out/lib
+
+# isolated demo stages
 python skills/kicad-pcb/scripts/demo_autoroute.py --stage create   # board + DSN
 python skills/kicad-pcb/scripts/demo_autoroute.py --stage route    # autoroute
-python skills/kicad-pcb/scripts/demo_autoroute.py --stage import   # importa SES
-python skills/kicad-pcb/scripts/demo_autoroute.py --stage drc      # so DRC
+python skills/kicad-pcb/scripts/demo_autoroute.py --stage import   # imports SES
+python skills/kicad-pcb/scripts/demo_autoroute.py --stage drc      # DRC only
 
 # flags: --route-timeout 600 --max-passes 50 --threads 4
-# exit codes: 0 ok | 2 ambiente | 3 estagio falhou | 4 DRC FAIL
+# exit codes: 0 ok | 2 environment | 3 stage failed | 4 DRC FAIL
 ```
 
-On Windows/macOS the pipeline script re-execs itself on KiCad's bundled Python
+On Windows/macOS the pipeline scripts re-exec themselves on KiCad's bundled Python
 when `import pcbnew` is unavailable in the current interpreter — nothing to configure.
 
 Optional env overrides: `KICAD_PYTHON`, `KICAD_CLI`,
@@ -71,21 +81,44 @@ Optional env overrides: `KICAD_PYTHON`, `KICAD_CLI`,
 
 | File | Purpose |
 |---|---|
-| `skills/kicad-pcb/SKILL.md` | 10-step Astra-style workflow + validated headless pipeline + 14 pitfalls |
+| `skills/kicad-pcb/SKILL.md` | Astra-style workflow + validated headless pipelines + 15 pitfalls |
 | `skills/kicad-pcb/references/api-cheatsheet.md` | Verified pcbnew Python calls (KiCad 10.0.6) + Freerouting bundle-first guide |
 | `skills/kicad-pcb/references/jlcpcb-rules.md` | JLCPCB fab/assembly rules + PCBA BOM/CPL upload workflow |
 | `skills/kicad-pcb/scripts/kicad_paths.py` | Cross-platform tool resolvers (env > known paths > PATH) |
 | `skills/kicad-pcb/scripts/demo_autoroute.py` | One-shot pipeline: board → DSN → Freerouting → SES → DRC |
+| `skills/kicad-pcb/scripts/esp32_example.py` | Full example: ESP32+LED+USB-C schematic + board + autoroute + renders |
+| `skills/kicad-pcb/scripts/easyeda_bridge.py` | EasyEDA Std/Pro PCB import + LCSC parts → KiCad |
 | `skills/kicad-pcb/scripts/check_env.py` | Preflight: report what's missing and how to fix it |
 | `.github/workflows/ci.yml` | Smoke matrix: ubuntu + windows (syntax + frontmatter + preflight) |
+| `CONTRIBUTING.md` | Ground rules for humans and AI agents who want to improve this skill |
 
-## Validated proof: ESP32 dev board
+## Example: ESP32 + LED + USB-C (generated 100% headless)
+
+Minimal dev board — ESP32-WROOM-32, USB-C receptacle (5V), AMS1117-3.3 regulator,
+LED + series resistor. Generated end-to-end by `esp32_example.py`: schematic,
+placement, autorouting, DRC, then exported renders.
+
+3D render (Linux) | Schematic (Linux)
+---|---
+![3D render](assets/example-3d-linux.png) | ![Schematic](assets/example-schematic-linux.png)
+
+Windows renders are generated by CI on every push (`artifacts` in the Actions tab):
+[example-3d-windows.png](assets/example-3d-windows.png) ·
+[example-schematic-windows.png](assets/example-schematic-windows.png).
+
+## Validated proof: ESP32 dev board (previous full design)
 
 13 components (ESP32-WROOM-32, CH340N, AMS1117-3.3, USB micro-B), 60x35mm 2-layer,
 177 tracks — **0 DRC violations, 0 unconnected** (KiCad 10.0.6, Freerouting 2.4.1,
 Linux; end-to-end headless).
 
 ![ESP32 dev board](assets/esp32-board.png)
+
+## EasyEDA import (validated)
+
+`import-pro` was validated with a real EasyEDA Pro board (45 footprints, 1068 tracks):
+geometry, nets, zones and outline convert losslessly (DRC: 0 unconnected / 0 parity;
+the 498 rule violations are the source project's own design rules, not import loss).
 
 ## Companion skills
 
@@ -94,12 +127,18 @@ For design review, BOM/sourcing and manufacturing workflows, pair with
 project analysis/DFM scoring, JLCPCB/LCSC/DigiKey BOM management, PCBA upload
 translator.
 
+## Contributing
+
+Improvements welcome — humans and AI agents alike. See [CONTRIBUTING.md](CONTRIBUTING.md)
+(English-only repo, cross-platform by default, validated claims only).
+
 ## Acknowledgments
 
 - [aklofas/kicad-happy](https://github.com/aklofas/kicad-happy) by Andrew Klofas
   (MIT) — JLCPCB fabrication/assembly rules in
   `references/jlcpcb-rules.md` are adapted (paraphrased) from it.
 - Freerouting's headless CLI makes the DSN/SES autorouting loop possible.
+- KiCad's built-in EasyEDA parsers (via `pcbnew.PCB_IO_MGR`) power the import bridge.
 
 ## License
 

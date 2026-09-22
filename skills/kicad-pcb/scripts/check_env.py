@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Preflight do toolchain KiCad headless — Linux / Windows / macOS.
+"""Preflight for the headless KiCad toolchain — Linux / Windows / macOS.
 
-Uso:
-  python3 check_env.py            # relatorio; exit 0 sempre (informativo)
-  python3 check_env.py --strict   # exit 1 se algo critico faltar (p/ CI)
+Usage:
+  python3 check_env.py            # report; always exit 0 (informational)
+  python3 check_env.py --strict   # exit 1 if anything critical is missing (for CI)
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def check_python_pcbnew() -> str:
                 return f"{p} ({v})"
     raise kp.ResolveError(
         "python+pcbnew",
-        "instale o KiCad 10 (inclui os bindings pcbnew) ou aponte KICAD_PYTHON")
+        "install KiCad 10 (includes the pcbnew bindings) or set KICAD_PYTHON")
 
 
 CHECKS = [
@@ -38,24 +38,24 @@ CHECKS = [
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--strict", action="store_true", help="exit 1 se algo faltar")
+    ap.add_argument("--strict", action="store_true", help="exit 1 if anything is missing")
     args = ap.parse_args()
 
-    print(f"Sistema: {OSNAME} | python: {sys.version.split()[0]} ({sys.executable})\n")
+    print(f"System: {OSNAME} | python: {sys.version.split()[0]} ({sys.executable})\n")
     ok_all = True
     for name, fn in CHECKS:
         try:
             val = fn()
             print(f"  OK  {name:16} -> {val}")
-        except Exception as e:  # noqa: BLE001 — preflight deve listar tudo
+        except Exception as e:  # noqa: BLE001 — preflight must list everything
             ok_all = False
             print(f"  X   {name:16} -> {e}")
     print()
     if ok_all:
-        print("Toolchain completo. Proximo passo: "
-              "python3 demo_autoroute.py (pipeline completo ate DRC).")
+        print("Toolchain complete. Next step: "
+              "python3 demo_autoroute.py (full pipeline through DRC).")
     else:
-        print("Faltam componentes acima (veja as dicas de correcao em cada linha).")
+        print("Missing components above (see the fix hints on each line).")
     return 0 if (ok_all or not args.strict) else 1
 
 
