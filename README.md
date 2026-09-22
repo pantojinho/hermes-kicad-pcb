@@ -85,48 +85,62 @@ Optional env overrides: `KICAD_PYTHON`, `KICAD_CLI`,
 
 | File | Purpose |
 |---|---|
-| `skills/kicad-pcb/SKILL.md` | Reviewed-design workflow + headless pipelines + 17 pitfalls |
+| `skills/kicad-pcb/SKILL.md` | Reviewed-design workflow + headless pipelines + 18 pitfalls |
 | `skills/kicad-pcb/references/api-cheatsheet.md` | Verified pcbnew Python calls (KiCad 10.0.6) + Freerouting bundle-first guide |
 | `skills/kicad-pcb/references/jlcpcb-rules.md` | JLCPCB fab/assembly rules + PCBA BOM/CPL upload workflow |
 | `skills/kicad-pcb/scripts/kicad_paths.py` | Cross-platform tool resolvers (env > known paths > PATH) |
 | `skills/kicad-pcb/scripts/simple_board.py` | KiCad-only LED board: schematic + board + ERC/DRC/parity + fab zip + renders |
+| `skills/kicad-pcb/scripts/sch_gen.py` | Readable KiCad 10 schematics from Python + cropped SVG export (used by both examples) |
 | `skills/kicad-pcb/scripts/demo_autoroute.py` | One-shot pipeline: board → DSN → Freerouting → SES → DRC |
 | `skills/kicad-pcb/scripts/esp32_example.py` | Full example: ESP32+LED+USB-C schematic + board + autoroute + renders |
 | `skills/kicad-pcb/scripts/easyeda_bridge.py` | EasyEDA Std/Pro PCB import + LCSC parts → KiCad |
 | `skills/kicad-pcb/scripts/check_env.py` | Preflight: report what's missing and how to fix it |
-| `.github/workflows/ci.yml` | Smoke matrix: ubuntu + windows (syntax + frontmatter + preflight) |
+| `.github/workflows/ci.yml` | Smoke matrix + full e2e on Linux and Windows (both examples, gated by `.github/scripts/example_gate.py`) |
 | `CONTRIBUTING.md` | Ground rules for humans and AI agents who want to improve this skill |
 
-## Example: LED board built autonomously by an AI agent on Windows
+## Example: LED board built autonomously by an AI agent (Windows + Linux)
 
 An AI coding agent (Claude Code) cloned this repo on a stock Windows 11 laptop with
 only KiCad 10.0.6 installed (no Freerouting, no Java), ran `simple_board.py` and
 produced this board on its own: schematic, placement, routing, ERC 0 / DRC 0 /
-unconnected 0 / schematic parity 0, JLCPCB-ready gerber zip and the 3D render below.
+unconnected 0 / schematic parity 0, JLCPCB-ready gerber zip and the renders below.
+The same command produces the same board on Linux (tested by hand, and rebuilt by
+the `linux-e2e` + `windows-e2e` CI jobs on every push).
 
 ```bash
 python skills/kicad-pcb/scripts/simple_board.py --out led-board --vin 3.3 --led-ma 2
 ```
 
-![LED board generated headless on Windows](assets/simple-led-windows.png)
+3D render | Schematic
+---|---
+![LED board generated headless on Windows and Linux](assets/simple-led-3d.png) | ![LED board schematic](assets/simple-led-schematic.svg)
 
-## Example: ESP32 + LED + USB-C (generated 100% headless)
+## Example: ESP32 + LED + USB-C (generated 100% headless, Linux + Windows)
 
 Minimal dev board — ESP32-WROOM-32, USB-C receptacle (5V), AMS1117-3.3 regulator,
-LED + series resistor. Generated end-to-end by `esp32_example.py`: schematic,
-placement (USB-C mouth flush with the board edge, antenna past the edge),
-Freerouting autorouting, GND stitching + pours, DRC, then exported renders.
+LED on GPIO2 + series resistor. Generated end-to-end by `esp32_example.py`:
+schematic → board nets taken from the schematic netlist → placement (USB-C mouth
+flush with the board edge, antenna past the edge) → Freerouting → GND stitching +
+pours → DRC with schematic parity → renders. Same result on Linux and Windows
+(KiCad 10.0.6 + Freerouting 2.4.1); CI rebuilds and gates it on both.
 
-3D render (Windows 11, KiCad 10.0.6) | Schematic
+3D render | Schematic
 ---|---
-![3D render](assets/example-3d-windows.png) | ![Schematic](assets/example-schematic-windows.png)
+![3D render](assets/example-3d.png) | ![Schematic](assets/example-schematic.svg)
 
-DRC: 0 errors, 0 unconnected, 0 parity. The 4 remaining `hole_clearance` warnings
-(0.194 mm vs the 0.25 mm default) are inside the GCT USB4105 library footprint
-itself (its NPTH alignment pegs next to its own GND pads, per the maker's land
-pattern) — confirm against your fab's NPTH-to-copper limit rather than relaxing
-the rule. Known gap: the `AMS1117-3.3` symbol is derived (`extends`), so U2 is not
-yet drawn in the generated schematic (the board has it).
+DRC: **0 errors, 0 unconnected, 0 schematic-parity items**. Findings that remain
+visible on purpose (and are the only ones the CI gate accepts):
+- 4× `hole_clearance` (0.194 mm vs 0.25 mm) inside the GCT USB4105 library
+  footprint itself — its NPTH alignment pegs next to its own GND pads, per the
+  maker's land pattern. Confirm against your fab's NPTH-to-copper limit rather than
+  relaxing the rule.
+- ERC on U1 EN (pin 3): left open so it stays flagged — a real ESP32 board needs an
+  EN RC (10 kΩ pull-up + 1 µF) and usually a BOOT button; this example only
+  demonstrates the headless pipeline.
+
+The antenna overhang is handled by a scoped custom rule in the generated
+`.kicad_dru` (`A.memberOfFootprint('U1')`, silkscreen only) instead of a global
+severity change or editing the library footprint.
 
 ## Validated proof: ESP32 dev board (previous full design)
 

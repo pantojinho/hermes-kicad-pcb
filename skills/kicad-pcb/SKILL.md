@@ -46,7 +46,7 @@ python3 skills/kicad-pcb/scripts/check_env.py
 
 # 1a) smallest end-to-end board, ONLY KiCad needed (no Freerouting/Java):
 #     header -> R -> LED; schematic + board + ERC + DRC with schematic parity
-#     + gerbers/drill zip + BOM/pos + 3D render. Validated on Windows 11 (KiCad 10.0.6).
+#     + gerbers/drill zip + BOM/pos + 3D render. Validated on Windows 11 + Linux (KiCad 10.0.6).
 python3 skills/kicad-pcb/scripts/simple_board.py --out /tmp/led --vin 5 --led-ma 3
 
 # 1b) reference pipeline: board -> DSN -> Freerouting -> SES -> DRC (exit 0 = PASS)
@@ -108,23 +108,38 @@ nothing to configure.
 11. ESP32/RF modules: use the exact module manufacturer's antenna placement and copper/ground keepout guidance. Edge overhang and clearance are package- and board-specific; inspect the return path and enclosure too.
 12. Project-level design rules live in `.kicad_pro`; set track, clearance, via and drill limits from the selected fabricator's current stack/service and the approved net classes. The example's 0.127 mm track and 0.2 mm drill are demo settings, not universal minima.
 13. Bounding-box packing with a gap worked in the ESP32 demo (177 tracks), but it proves neither collision freedom nor electrical, RF, thermal or assembly quality on another board. Inspect courtyards, height, orientation, keepouts and service access.
-14. Schematic generation: format version 20260101 worked on KiCad 10.0.6. **Symbol
-    library Y grows UP, sheet Y grows DOWN**: a pin at lib `(px, py)` of a symbol at
-    `(x, y)` sits at `(x + px, y - py)` on the sheet (rotation 0). Adding `py` instead
-    silently lands labels on the wrong pins. Always run `kicad-cli sch erc` and diff
-    `sch export netlist` against the board nets; give symbols an `(instances ...)` block
-    and footprints `SetPath(KIID_PATH("/<symbol uuid>"))` + `SetFPID(LIB_ID(lib, fp))`
-    so `pcb drc --schematic-parity` can match them (see `simple_board.py`). Check labels and actual netlist connectivity; investigate each `pin_not_driven` finding against the intended power source instead of suppressing it categorically.
+14. Schematic generation: use `scripts/sch_gen.py` (format 20260101, KiCad 10.0.6) rather
+    than hand-writing s-expressions. It encodes what bit us: **library Y grows UP, sheet
+    Y grows DOWN** (pin `(px, py)` of a symbol at `(x, y)` is `(x + px, y - py)`; `+ py`
+    silently put +3V3 on the ESP32 GND pins); `extends` symbols are flattened (else they
+    embed with no body/pins); every pin gets a wire stub + label/power symbol pointing
+    AWAY from the body; unused pins get no-connect flags; PWR_FLAG marks external
+    supplies; everything on the 1.27 mm grid. Pick the symbol whose pins match the
+    footprint 1:1 (16-pin GCT USB-C -> `USB_C_Receptacle_USB2.0_16P`, not the 24-pin
+    one). Leave pins you have NOT designed (e.g. ESP32 EN) unflagged so ERC keeps
+    reporting them; investigate every `pin_not_driven` instead of suppressing it.
 15. Imported EasyEDA boards keep the ORIGINAL design rules of the source project — expect DRC violations against KiCad/JLCPCB defaults (a real import showed 498). Triage them; don't blanket-fix.
 16. Edge connectors (USB-C etc.): rotate so the mouth faces OUT and slide the
     footprint until its `PCB Edge` line (Dwgs.User) sits on the outline — a
     rot-0 horizontal receptacle points its opening INTO the board. Modules that
-    overhang on purpose (ESP32 antenna) leave silkscreen past the edge: trim it
-    (`silk_edge_clearance`) instead of ignoring the check.
+    overhang on purpose (ESP32 antenna) leave silkscreen past the edge: do not edit
+    the footprint (that trades it for `lib_footprint_mismatch`) and do not relax the
+    global severity — write a scoped, commented rule in `<board>.kicad_dru`:
+    `(rule "..." (layer "F.Silkscreen") (constraint silk_clearance (min -100mm))
+    (condition "A.memberOfFootprint('U1')") (severity ignore))`. (`A.Parent.Reference`
+    and `edge_clearance` do NOT match this check.) Prove the scope with a negative test.
 17. Post-route stitching vias go through BOTH layers: test candidate spots against
     foreign-net tracks and vias (not only pads) and against vias already placed,
     or a routing change silently turns into `shorting_items` / `holes_co_located`.
     KiCad 10: a via's width is per layer, `via.GetWidth(pcbnew.F_Cu)`.
+18. Schematic parity end-to-end: give symbols an `(instances ...)` block, footprints
+    `SetPath(KIID_PATH("/<symbol uuid>"))` + `SetFPID(LIB_ID(lib, fp))`, and take the
+    board nets FROM the schematic (`kicad-cli sch export netlist --format kicadxml`)
+    instead of typing them twice — including the single-pin `unconnected-(...)` nets of
+    no-connect pins. The XML prints `/` in those auto names, KiCad stores `{slash}`
+    (`unconnected-(U1-SDI{slash}SD1-Pad22)`). `pcb drc --schematic-parity` and custom
+    rules are looked up by the BOARD's file name: copy `.kicad_sch` / `.kicad_dru` next
+    to a renamed board (e.g. `*-routed.kicad_pcb`), or parity silently checks nothing.
 
 ## JLCPCB-class fab rules (2-layer)
 
@@ -180,6 +195,7 @@ kicad-cli pcb export drill   --output gerbers/ board.kicad_pcb
 kicad-cli pcb export pos     --output pos.csv board.kicad_pcb
 kicad-cli pcb render --side top --quality high -o top.png board.kicad_pcb   # 3D render PNG
 kicad-cli sch export pdf -o sch.pdf board.kicad_sch                          # schematic PDF
+kicad-cli sch export svg -e -o dir/ board.kicad_sch   # no frame; sch_gen.export_svg crops it
 kicad-cli sch export netlist board.kicad_sch
 kicad-cli fp export svg --output dir/ FootprintFile.kicad_mod
 ```

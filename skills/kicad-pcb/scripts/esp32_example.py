@@ -8,7 +8,8 @@ Generates EVERYTHING without a GUI:
   4. autoroute  (DSN -> Freerouting -> SES)
   5. DRC (json) + 3D render (PNG) + schematic PNG
 
-Circuit: USB-C VBUS 5V -> AMS1117-3.3 -> ESP32-WROOM-32; LED on GPIO2 (pin 22)
+Circuit: USB-C VBUS 5V -> AMS1117-3.3 -> ESP32-WROOM-32; LED on GPIO2 (module pin 24;
+pin 22 is SDI/SD1, the internal flash bus)
 via 1k; 5.1k pulldowns on CC1/CC2 (USB-C sink requirement); 10uF decoupling.
 
 Usage:
@@ -20,7 +21,7 @@ Usage:
 Outputs (under --out):
   esp32-devboard.kicad_sch  esp32-devboard.kicad_pcb  esp32-devboard.kicad_pro
   esp32-routed.kicad_pcb    esp32-drc.json
-  renders/board-top.png     renders/schematic.png
+  renders/board-top.png     renders/schematic.svg (cropped; + .png with pymupdf)
 
 Exit codes: 0 ok | 2 environment | 3 stage failed | 4 DRC failures.
 """
@@ -31,14 +32,15 @@ import contextlib
 import io
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import kicad_paths as kp  # noqa: E402
+import sch_gen as sg  # noqa: E402
 
+PROJECT = "esp32-devboard"
 SCH = "esp32-devboard.kicad_sch"
 PCB = "esp32-devboard.kicad_pcb"
 PRO = "esp32-devboard.kicad_pro"
@@ -69,29 +71,16 @@ PLACEMENT = [
 # connectors whose footprint carries a "PCB Edge" line on Dwgs.User: that line
 # is moved onto the left board edge so the plug opening faces outwards
 EDGE_MOUNT = {"J1"}
-REF_BELOW = {"U2"}
-# modules that overhang the board on purpose (antenna past the edge): their
-# silkscreen outline is trimmed to the board, as the fab cannot print it anyway
-OVERHANG = {"U1"}
-SILK_EDGE_MARGIN = 0.3  # mm between trimmed silkscreen and the board edge  # parts near the top edge: silkscreen reference goes under them
+REF_BELOW = {"U2"}  # parts near the top edge: silkscreen reference goes under them
 
 # zone x-limit: cover the WROOM's GND pads (up to x=44) but keep 1mm from the
 # board edge; the module's antenna keepout is OFF-board (module at the edge).
 ZONE_X_MAX = 44.0
 
-# net assignment: ref -> list of (pad_regex, net). Applied to ALL pads whose
-# number matches (multi-pad numbers like the WROOM thermal pad 39: pitfall!).
-PAD_NETS = {
-    "J1": [(r"A1|B1|B12|A12|SH", "GND"), (r"A4|B4|A9|B9", "+5V"), (r"A5", "CC1"), (r"B5", "CC2")],
-    "U1": [(r"1|38|39", "GND"), (r"2", "+3V3"), (r"22", "LED")],
-    "U2": [(r"1", "GND"), (r"2", "+3V3"), (r"3", "+5V")],  # AMS1117: 2 = VOUT incl. tab
-    "C1": [(r"1", "+5V"), (r"2", "GND")],
-    "C2": [(r"1", "+3V3"), (r"2", "GND")],
-    "R1": [(r"1", "LED"), (r"2", "LED_A")],
-    "D1": [(r"1", "GND"), (r"2", "LED_A")],  # 0603 LED: pad 1 = cathode
-    "R2": [(r"1", "CC1"), (r"2", "GND")],
-    "R3": [(r"1", "CC2"), (r"2", "GND")],
-}
+# Board nets are NOT typed twice: gen_board reads them from the schematic netlist
+# (kicad-cli sch export netlist), like "Update PCB from Schematic" — so schematic
+# parity holds by construction and a schematic mistake shows up on the board too.
+GND_NETS = {"GND"}
 
 VALUES = {"U1": "ESP32-WROOM-32", "U2": "AMS1117-3.3", "J1": "USB_C_GCT_USB4105",
           "C1": "10uF", "C2": "10uF", "R1": "1k", "R2": "5.1k", "R3": "5.1k",
@@ -101,7 +90,7 @@ VALUES = {"U1": "ESP32-WROOM-32", "U2": "AMS1117-3.3", "J1": "USB_C_GCT_USB4105"
 SYMBOLS = {  # ref -> (lib_name, symbol_name)
     "U1": ("RF_Module", "ESP32-WROOM-32"),
     "U2": ("Regulator_Linear", "AMS1117-3.3"),
-    "J1": ("Connector", "USB_C_Receptacle"),
+    "J1": ("Connector", "USB_C_Receptacle_USB2.0_16P"),  # 16 pins = the GCT 16P footprint
     "R1": ("Device", "R"), "R2": ("Device", "R"), "R3": ("Device", "R"),
     "C1": ("Device", "C"), "C2": ("Device", "C"),
     "D1": ("Device", "LED"),
@@ -132,131 +121,66 @@ def _import_pcbnew():
 
 # ------------------------------------------------------------------ schematic
 
-def _symbols_dir() -> Path:
-    for env in ("KICAD10_SYMBOL_DIR", "KICAD_SYMBOL_DIR"):
-        if os.environ.get(env):
-            p = Path(os.environ[env])
-            if (p / "Device.kicad_sym").exists():
-                return p
-    fp = kp.footprints_dir()  # .../share/kicad/footprints -> .../share/kicad/symbols
-    cands = [fp.parent / "symbols", fp / "../symbols",
-             Path("/usr/share/kicad/symbols"), Path("/usr/local/share/kicad/symbols")]
-    if kp.IS_WIN:
-        cands += [fp.parent / "share" / "kicad" / "symbols"]
-    for c in cands:
-        c = c.resolve()
-        if (c / "Device.kicad_sym").exists():
-            return c
-    raise kp.ResolveError("symbols dir", "official KiCad symbol libs not found; set "
-                          "KICAD10_SYMBOL_DIR")
-
-
-def _extract_symbol_block(lib_file: Path, sym_name: str) -> str:
-    """Raw `(symbol "NAME" ...)` block from a .kicad_sym library (brace balanced)."""
-    text = lib_file.read_text(encoding="utf-8", errors="replace")
-    m = re.search(r'\(symbol\s+"%s"' % re.escape(sym_name), text)
-    if not m:
-        raise KeyError(f"symbol {sym_name} not in {lib_file}")
-    depth, i = 0, m.start()
-    for j in range(m.start(), len(text)):
-        if text[j] == "(":
-            depth += 1
-        elif text[j] == ")":
-            depth -= 1
-            if depth == 0:
-                return text[m.start():j + 1]
-    raise ValueError(f"unbalanced symbol block for {sym_name}")
-
-
-def _symbol_pins(block: str) -> list[tuple[str, float, float]]:
-    """[(pin_number, x, y)] from a symbol block (top-level pins only)."""
-    pins = []
-    for m in re.finditer(
-            r'\(pin\s+\w+\s+line\s+\(at\s+([-0-9.]+)\s+([-0-9.]+)\s+[-0-9.]+\)'
-            r'(?:.*?)\(number\s+"([^"]+)"', block, re.S):
-        # only pins directly in this unit (not nested sub-symbols)
-        seg = block[m.start():m.start() + 400]
-        if re.match(r'\(pin\s+\w+\s+line\s+\(at', seg):
-            pins.append((m.group(3), float(m.group(1)), float(m.group(2))))
-    # dedupe by number, keep first
-    seen, out = set(), []
-    for p in pins:
-        if p[0] not in seen:
-            seen.add(p[0])
-            out.append(p)
-    return out
-
-
-# schematic placements (x, y in schematic mm, rotation deg)
+# schematic: ref -> (x, y) on an A4 sheet (mm, y down), laid out as a signal flow:
+# USB-C -> CC pulldowns | 5V -> regulator + caps -> ESP32 -> LED
 SCH_PLACE = {
-    "J1": (25, 105, 0), "U2": (110, 40, 0), "C1": (75, 25, 0), "C2": (140, 25, 0),
-    "R1": (110, 105, 0), "D1": (140, 105, 0), "R2": (60, 60, 0), "R3": (60, 85, 0),
-    "U1": (180, 60, 0),
+    "J1": (45.72, 101.6), "R2": (78.74, 96.52), "R3": (91.44, 96.52),
+    "C1": (111.76, 66.04), "U2": (134.62, 60.96), "C2": (157.48, 66.04),
+    "U1": (210.82, 101.6), "R1": (248.92, 91.44), "D1": (254.0, 111.76),
 }
+# ref -> {symbol pin: net}; stacked pins (USB-C VBUS/GND groups) need one entry
+SCH_NETS = {
+    "J1": {"A4": "+5V", "A1": "GND", "SH": "GND", "A5": "CC1", "B5": "CC2"},
+    "R2": {"1": "CC1", "2": "GND"}, "R3": {"1": "CC2", "2": "GND"},
+    "C1": {"1": "+5V", "2": "GND"},
+    "U2": {"3": "+5V", "2": "+3V3", "1": "GND"},
+    "C2": {"1": "+3V3", "2": "GND"},
+    "U1": {"2": "+3V3", "1": "GND", "24": "LED"},
+    "R1": {"1": "LED", "2": "LED_A"},
+    "D1": {"2": "LED_A", "1": "GND"},
+}
+SOURCES = {("J1", "A4"), ("J1", "A1")}  # power enters through the USB-C: PWR_FLAGs
+# left open on purpose so ERC keeps flagging them: a real ESP32 board needs an
+# EN RC (10k pull-up + 1uF) — out of scope for this minimal routing demo
+NO_FLAG = {("U1", "3")}
+FOOTPRINTS = {ref: f"{lib}:{fp}" for lib, fp, ref, *_ in PLACEMENT}
+SCH_BBOX: list[tuple[float, float, float, float]] = []
 
 
 def gen_schematic(outdir: Path) -> Path:
-    symdir = _symbols_dir()
-    lib_blocks, inst = [], []
-    # labels: (name, kind) attached at the pin tip of (ref, pin_number)
-    label_at = {
-        ("J1", "A4"): "+5V:g", ("J1", "B4"): "+5V:g", ("J1", "A9"): "+5V:g", ("J1", "B9"): "+5V:g",
-        ("J1", "A1"): "GND:g", ("J1", "B1"): "GND:g", ("J1", "S1"): "GND:g",
-        ("J1", "A5"): "CC1:l", ("J1", "B5"): "CC2:l",
-        ("U2", "3"): "+5V:g", ("U2", "1"): "GND:g", ("U2", "2"): "+3V3:g",
-        ("C1", "1"): "+5V:g", ("C1", "2"): "GND:g",
-        ("C2", "1"): "+3V3:g", ("C2", "2"): "GND:g",
-        ("U1", "2"): "+3V3:g", ("U1", "1"): "GND:g", ("U1", "38"): "GND:g",
-        ("U1", "22"): "LED:l",
-        ("R1", "1"): "LED:l", ("R1", "2"): "LED_A:l",
-        ("D1", "2"): "LED_A:l", ("D1", "1"): "GND:g",
-        ("R2", "1"): "CC1:l", ("R2", "2"): "GND:g",
-        ("R3", "1"): "CC2:l", ("R3", "2"): "GND:g",
-    }
-    labels_sx = []
+    sch = sg.Schematic(sg.symbols_dir(), PROJECT,
+                       "ESP32 + LED + USB-C - headless example", paper="A4")
     for ref, (lib_name, sym_name) in SYMBOLS.items():
-        lib_file = symdir / f"{lib_name}.kicad_sym"
-        block = _extract_symbol_block(lib_file, sym_name)
-        lib_blocks.append(block.replace(f'(symbol "{sym_name}"',
-                                        f'(symbol "{lib_name}:{sym_name}"', 1))
-        x, y, rot = SCH_PLACE[ref]
-        pins = dict((n, (px, py)) for n, px, py in _symbol_pins(block))
-        inst.append(
-            f'(symbol (lib_id "{lib_name}:{sym_name}") (at {x} {y} {rot}) (unit 1)\n'
-            f'  (property "Reference" "{ref}" (at {x} {y - 8} 0) (effects (font (size 1.27 1.27))))\n'
-            f'  (property "Value" "{VALUES[ref]}" (at {x} {y + 8} 0) (effects (font (size 1.27 1.27))))\n'
-            f'  (property "Footprint" "" (at {x} {y} 0) (effects (font (size 1.27 1.27)) hide))\n'
-            f'  (pin "1" (uuid "00000000-0000-0000-0000-{abs(hash(ref)) % 999999999999:012d}")))')
-        for (lref, pin), spec in label_at.items():
-            if lref != ref or pin not in pins:
-                continue
-            px, py = pins[pin]
-            lx, ly = x + px, y - py  # library y is UP, sheet y is DOWN
-            if spec.endswith(":g"):
-                labels_sx.append(f'(global_label "{spec[:-2]}" (shape input) (at {lx:.2f} {ly:.2f} 0)'
-                                 f' (effects (font (size 1.27 1.27))) (uuid "00000000-0000-0000-0000-0000000000{lref[1]}"))')
-            else:
-                labels_sx.append(f'(label "{spec[:-2]}" (at {lx:.2f} {ly:.2f} 0)'
-                                 f' (effects (font (size 1.27 1.27))))')
-
-    sch = f'''(kicad_sch (version 20260101) (generator "esp32_example")
-  (uuid "11111111-2222-3333-4444-555555555555")
-  (paper "A3")
-  (title_block (title "ESP32 + LED + USB-C - headless example") (company "kicad-pcb skill"))
-  (lib_symbols
-    {''.join(lib_blocks)}
-  )
-  {chr(10).join(inst)}
-  {chr(10).join(labels_sx)}
-)
-'''
-    dst = outdir / SCH
-    dst.write_text(sch, encoding="utf-8")
-    print(f"[sch] schematic written: {dst} ({len(inst)} symbols, {len(labels_sx)} labels)")
+        x, y = SCH_PLACE[ref]
+        sch.add(ref, lib_name, sym_name, x, y, VALUES[ref], FOOTPRINTS[ref])
+    for ref, pins in SCH_NETS.items():
+        for pin, net in pins.items():
+            sch.connect(ref, pin, net, source=(ref, pin) in SOURCES)
+    for ref, pin in NO_FLAG:  # reserve the point so no_connect_rest() skips it
+        sch.taken[sch.parts[ref].pin_xy(pin)] = "(open)"
+    n_nc = sch.no_connect_rest()
+    dst = sch.write(outdir / SCH)
+    SCH_BBOX[:] = [sch.bbox()]
+    print(f"[sch] schematic written: {dst} ({len(sch.parts)} symbols, {n_nc} no-connect flags)")
     return dst
 
 
 # ------------------------------------------------------------------ board
+
+# Custom DRC rules: scoped, commented exceptions instead of global severity changes.
+DRU = """(version 1)
+
+# The ESP32-WROOM-32 antenna overhangs the board edge on purpose (module maker's
+# layout guidance: antenna outside the board or over a copper-free area). Only
+# U1's silkscreen outline is exempt from the silk-to-edge check; its copper and
+# every other footprint keep the normal rules.
+(rule "U1 antenna overhang: silkscreen past the edge"
+    (layer "F.Silkscreen")
+    (constraint silk_clearance (min -100mm))
+    (condition "A.memberOfFootprint('U1')")
+    (severity ignore))
+"""
+
 
 def gen_project(outdir: Path) -> Path:
     pro = {
@@ -275,7 +199,8 @@ def gen_project(outdir: Path) -> Path:
     }
     dst = outdir / PRO
     dst.write_text(json.dumps(pro, indent=2), encoding="utf-8")
-    print(f"[pro] project rules (JLCPCB-class): {dst}")
+    dst.with_suffix(".kicad_dru").write_text(DRU, encoding="utf-8")
+    print(f"[pro] project rules (JLCPCB-class) + custom rules: {dst}")
     return dst
 
 
@@ -312,12 +237,16 @@ def gen_board(pcbnew, outdir: Path) -> Path:
             nets[name] = n
         return nets[name]
 
+    if not (outdir / SCH).exists():
+        gen_schematic(outdir)
+    pad_nets = schematic_pad_nets(outdir / SCH)
     fps = {}
-    unmatched = []
     for lib, fp_name, ref, x, y, rot in PLACEMENT:
         f = pcbnew.FootprintLoad(str(libs / f"{lib}.pretty"), fp_name)
         if not f:
             sys.exit(f"ERROR: footprint {lib}:{fp_name} not found in {libs}")
+        f.SetFPID(pcbnew.LIB_ID(lib, fp_name))  # parity compares lib:name
+        f.SetPath(pcbnew.KIID_PATH("/" + sg.symbol_uid(PROJECT, ref)))  # link to symbol
         f.SetReference(ref)
         f.SetValue(VALUES[ref])
         f.SetPosition(pcbnew.VECTOR2I(mm(x), mm(y)))  # anchor = pad-1/origin
@@ -334,38 +263,31 @@ def gen_board(pcbnew, outdir: Path) -> Path:
             f.Move(pcbnew.VECTOR2I(int(mm(x)) - cx, int(mm(y)) - cy))
         if ref in EDGE_MOUNT:
             align_to_left_edge(pcbnew, f)
-        if ref in OVERHANG:
-            trim_offboard_silk(pcbnew, f)
         if ref in REF_BELOW:  # default ref text would be clipped by the board edge
             pads_bb = [p.GetBoundingBox() for p in f.Pads()]
             cx = (min(b.GetLeft() for b in pads_bb) + max(b.GetRight() for b in pads_bb)) // 2
             f.Reference().SetPosition(pcbnew.VECTOR2I(
                 cx, max(b.GetBottom() for b in pads_bb) + int(mm(1.2))))
         fps[ref] = f
-        matched_pats = set()
-        for pad in f.Pads():
-            num = pad.GetNumber()
-            for pat, net_name in PAD_NETS.get(ref, []):
-                if num and re.fullmatch(pat, num):
-                    pad.SetNet(net(net_name))
-                    matched_pats.add(pat)
-                    if net_name == "GND":
-                        # solid connection to the zone (no thermal spokes ->
-                        # no starved_thermal on small pads like USB-C corners)
-                        pad.SetLocalZoneConnection(pcbnew.ZONE_CONNECTION_FULL)
-                    break
-        dead = [p for p, _ in PAD_NETS.get(ref, []) if p not in matched_pats]
-        if dead:
-            unmatched.append((ref, dead))
+        for pad in f.Pads():  # every pad sharing a number (WROOM pad 39 x9: pitfall!)
+            net_name = pad_nets.get((ref, pad.GetNumber()))
+            if not net_name:
+                continue
+            pad.SetNet(net(net_name))
+            if net_name in GND_NETS:
+                # solid connection to the zone (no thermal spokes ->
+                # no starved_thermal on small pads like USB-C corners)
+                pad.SetLocalZoneConnection(pcbnew.ZONE_CONNECTION_FULL)
+    pads_on_board = {(r, p.GetNumber()) for r, f in fps.items() for p in f.Pads()}
+    missing = sorted(k for k in pad_nets if k not in pads_on_board)
 
     # NOTE: the GND zone is added AFTER routing (add_gnd_zone) — zones present
     # during DSN export become obstacles for Freerouting.
 
     board.Save(str(outdir / PCB))
     print(f"[board] {len(fps)} footprints, {len(nets)} nets -> {outdir / PCB}")
-    if unmatched:
-        for ref, miss in unmatched:
-            print(f"[board] WARNING {ref}: net patterns matched no pad: {miss}")
+    if missing:  # a symbol pin with no pad = wrong symbol/footprint pairing
+        print(f"[board] WARNING schematic pins without a pad: {missing}")
     return outdir / PCB
 
 
@@ -380,37 +302,28 @@ def align_to_left_edge(pcbnew, f) -> None:
     f.Move(pcbnew.VECTOR2I(-min(xs), 0))
 
 
-def trim_offboard_silk(pcbnew, f) -> None:
-    """Clip f's straight silkscreen segments to the board rectangle (minus a
-    margin); segments left shorter than 0.2 mm are removed. Copper untouched."""
-    mm = pcbnew.FromMM
-    lo_x, lo_y = mm(SILK_EDGE_MARGIN), mm(SILK_EDGE_MARGIN)
-    hi_x, hi_y = mm(BOARD_W - SILK_EDGE_MARGIN), mm(BOARD_H - SILK_EDGE_MARGIN)
-    trimmed = removed = 0
-    for g in list(f.GraphicalItems()):
-        if (g.GetLayer() not in (pcbnew.F_SilkS, pcbnew.B_SilkS)
-                or not isinstance(g, pcbnew.PCB_SHAPE) or g.GetShape() != pcbnew.SHAPE_T_SEGMENT):
-            continue
-        (x1, y1), (x2, y2) = (g.GetStart().x, g.GetStart().y), (g.GetEnd().x, g.GetEnd().y)
-        # Liang-Barsky clip of the segment against the inner rectangle
-        t0, t1, dx, dy = 0.0, 1.0, x2 - x1, y2 - y1
-        for pk, qk in ((-dx, x1 - lo_x), (dx, hi_x - x1), (-dy, y1 - lo_y), (dy, hi_y - y1)):
-            if pk == 0:
-                if qk < 0:
-                    t0, t1 = 1.0, 0.0
-                continue
-            r = qk / pk
-            t0, t1 = (max(t0, r), t1) if pk < 0 else (t0, min(t1, r))
-        if (t0, t1) == (0.0, 1.0):
-            continue
-        if t1 - t0 <= 0 or (t1 - t0) * (dx * dx + dy * dy) ** 0.5 < mm(0.2):
-            f.Remove(g)
-            removed += 1
-            continue
-        g.SetStart(pcbnew.VECTOR2I(int(x1 + t0 * dx), int(y1 + t0 * dy)))
-        g.SetEnd(pcbnew.VECTOR2I(int(x1 + t1 * dx), int(y1 + t1 * dy)))
-        trimmed += 1
-    print(f"[board] {f.GetReference()}: off-board silkscreen trimmed {trimmed}, removed {removed}")
+def schematic_pad_nets(sch: Path) -> dict[tuple[str, str], str]:
+    """{(ref, pad number): net} from `kicad-cli sch export netlist` (KiCad XML).
+    Includes the single-pin `unconnected-(...)` nets KiCad gives no-connect pins,
+    which the board must carry too for schematic parity."""
+    xml = sch.with_suffix(".net.xml")
+    _run([str(kp.kicad_cli()), "sch", "export", "netlist", "--format", "kicadxml",
+          "-o", str(xml), str(sch)])
+    if not xml.exists():
+        sys.exit(f"ERROR: netlist export failed for {sch}")
+    import xml.etree.ElementTree as ET
+    out = {}
+    for net in ET.parse(xml).getroot().iter("net"):
+        name = net.get("name")
+        if name.startswith(("unconnected-(", "Net-(")):
+            # auto names embed pin names; KiCad stores "/" there as {slash}
+            # (e.g. SDI/SD1), while the XML netlist prints it unescaped
+            head, body = name.split("(", 1)
+            name = f"{head}({body.replace('/', '{slash}')}"
+        for node in net.iter("node"):
+            out[(node.get("ref"), node.get("pin"))] = name
+    xml.unlink()
+    return out
 
 
 def stitch_gnd_vias(pcbnew, board) -> int:
@@ -555,7 +468,12 @@ def route(pcbnew, outdir: Path, timeout: int, passes: int, threads: int) -> Path
 
 def drc(outdir: Path) -> int:
     cli = kp.kicad_cli()
-    r = _run([str(cli), "pcb", "drc", "--format", "json", "--output",
+    # --schematic-parity looks for <board name>.kicad_sch next to the board
+    for src, ext in ((outdir / SCH, ".kicad_sch"), (outdir / PRO, ".kicad_dru")):
+        src = src.with_suffix(ext)
+        if src.exists():  # parity + custom rules are looked up by the BOARD's name
+            (outdir / ROUTED).with_suffix(ext).write_bytes(src.read_bytes())
+    r = _run([str(cli), "pcb", "drc", "--format", "json", "--schematic-parity", "--output",
               str(outdir / DRC), str(outdir / ROUTED)])
     if not (outdir / DRC).exists():
         sys.exit(f"ERROR: DRC failed: {(r.stderr or '')[:300]}")
@@ -587,29 +505,16 @@ def renders(outdir: Path) -> None:
     print(f"[render] 3D: {'OK' if ok else 'FAILED'} {rdir / 'board-top.png'}")
     if not ok:
         print((r.stderr or "")[:300])
-    # schematic: pdf -> png (pdftoppm or pymupdf; pdf itself is the fallback)
-    pdf = outdir / "esp32-devboard.pdf"
-    r2 = _run([cli, "sch", "export", "pdf", "-o", str(pdf), str(outdir / SCH)])
-    if pdf.exists():
-        png = rdir / "schematic.png"
-        if shutil_which("pdftoppm"):
-            subprocess.run(["pdftoppm", "-png", "-r", "150", "-singlefile",
-                            str(pdf), str(png.with_suffix(""))], timeout=120)
-        else:
-            try:
-                import fitz  # pymupdf
-                doc = fitz.open(str(pdf))
-                pix = doc[0].get_pixmap(dpi=150)
-                pix.save(str(png))
-            except ImportError:
-                print("[render] schematic PNG skipped (no pdftoppm/pymupdf); PDF kept: "
-                      f"{pdf}. Install pymupdf (pip install pymupdf) for PNG.")
-        print(f"[render] schematic: {'OK' if png.exists() else 'pdf-only'} {png}")
-
-
-def shutil_which(name: str):
-    import shutil
-    return shutil.which(name)
+    # schematic: PDF (full sheet) + SVG cropped to the drawing (+ PNG if possible)
+    _run([cli, "sch", "export", "pdf", "-o", str(outdir / "esp32-devboard.pdf"), str(outdir / SCH)])
+    svg = rdir / "schematic.svg"
+    bbox = SCH_BBOX[0] if SCH_BBOX else None
+    if bbox is None:  # --stage render: rebuild the layout to know the drawing extents
+        gen_schematic(outdir)
+        bbox = SCH_BBOX[0]
+    if sg.export_svg(cli, outdir / SCH, svg, bbox):
+        png = sg.svg_to_png(svg, rdir / "schematic.png")
+        print(f"[render] schematic: {svg}{' + png' if png else ' (png: pip install pymupdf)'}")
 
 
 # ------------------------------------------------------------------ main
