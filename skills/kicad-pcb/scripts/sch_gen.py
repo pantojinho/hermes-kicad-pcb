@@ -381,9 +381,29 @@ def write_lib_tables(outdir: Path, sym_libs, fp_libs) -> None:
 
 # ------------------------------------------------------------------ images
 
-def export_svg(cli: str, sch: Path, out_svg: Path, bbox: tuple[float, float, float, float],
-               extra: str = "") -> bool:
+def svg_content_bbox(svg: str) -> tuple[float, float, float, float] | None:
+    """Exact extent of what KiCad drew, in SVG user units. KiCad plots text as
+    stroked M/L paths, so the path points cover labels and notes too."""
+    xs, ys = [], []
+    for d in re.findall(r'<path[^>]*\sd="([^"]+)"', svg):
+        for x, y in re.findall(r"(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)", d):
+            xs.append(float(x))
+            ys.append(float(y))
+    for cx, cy, r in re.findall(r'<circle[^>]*cx="([-\d.]+)"[^>]*cy="([-\d.]+)"[^>]*r="([-\d.]+)"', svg):
+        xs += [float(cx) - float(r), float(cx) + float(r)]
+        ys += [float(cy) - float(r), float(cy) + float(r)]
+    for x, y, w, h in re.findall(r'<rect x="([-\d.]+)" y="([-\d.]+)" width="([-\d.]+)" height="([-\d.]+)" rx', svg):
+        xs += [float(x), float(x) + float(w)]
+        ys += [float(y), float(y) + float(h)]
+    if not xs:
+        return None
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def export_svg(cli: str, sch: Path, out_svg: Path, bbox: tuple[float, float, float, float] | None = None,
+               extra: str = "", extent: list[tuple[float, float]] | None = None, margin: float = 4.0) -> bool:
     """Schematic -> SVG cropped to `bbox` (sheet mm), no drawing sheet, white background.
+    bbox=None: crop to what KiCad actually drew (+ `extent` points, + margin).
     `extra`: SVG elements in sheet-mm coordinates drawn on top (e.g. pictorial.py)."""
     with tempfile.TemporaryDirectory() as td:
         # -n: no theme background, so the white page below is the only background
@@ -400,6 +420,13 @@ def export_svg(cli: str, sch: Path, out_svg: Path, bbox: tuple[float, float, flo
         return True
     # viewBox units per mm (KiCad plots in its own internal units)
     k = float(m.group(3)) / float(wm.group(1))
+    if bbox is None:
+        cb = svg_content_bbox(svg)
+        if cb is None:
+            return False
+        pts = [(cb[0] / k, cb[1] / k), (cb[2] / k, cb[3] / k)] + (extent or [])
+        bbox = (min(p[0] for p in pts) - margin, min(p[1] for p in pts) - margin,
+                max(p[0] for p in pts) + margin, max(p[1] for p in pts) + margin)
     x0, y0, x1, y1 = bbox
     vb = f"{x0 * k:.3f} {y0 * k:.3f} {(x1 - x0) * k:.3f} {(y1 - y0) * k:.3f}"
     svg = svg.replace(m.group(0), f'viewBox="{vb}"', 1)

@@ -74,6 +74,7 @@ class Inst:
     unit: int
     geo: LibGeo | None = None
     tips: list[tuple[float, float]] = field(default_factory=list)
+    texts: list[tuple[float, float, float, float]] = field(default_factory=list)  # visible fields
 
     def T(self, lx: float, ly: float) -> tuple[float, float]:
         """Library point (y up) -> sheet point (y down): rotate CCW, then mirror."""
@@ -165,14 +166,25 @@ def parse_sheet(path: Path) -> tuple[list[Inst], list[tuple[float, float]], list
         if inst.lib_id in libs:
             inst.geo = lib_geometry(libs[inst.lib_id], inst.unit)
             inst.tips = [inst.T(p.x, p.y) for p in inst.geo.pins]
-        for pm in re.finditer(r'\(property\s+"[^"]+"\s+"([^"]*)"\s+\(at\s+([-\d.]+)\s+([-\d.]+)', blk):
-            tail = blk[pm.end():pm.end() + 200]
-            if not pm.group(1) or re.match(r"[^()]*\)\s*\(effects[^)]*\)[^)]*\(hide yes\)", tail) \
-                    or "(hide yes)" in tail.split("(property")[0][:160]:
+        for pm in re.finditer(r'\(property\s+"[^"]+"\s+"([^"]*)"\s+\(at\s+([-\d.]+)\s+([-\d.]+)'
+                              r'(?:\s+([-\d.]+))?\)', blk):
+            pb = sg.balanced(blk, pm.start())
+            if not pm.group(1) or "(hide yes)" in pb or re.search(r"\(effects[^()]*(\([^()]*\)[^()]*)*\bhide\b", pb):
                 continue
-            fx, fy, w = _num(pm.group(2)), _num(pm.group(3)), len(pm.group(1)) * 1.1
-            fields.append((fx - w, fy - 1.5))
-            fields.append((fx + w, fy + 1.5))
+            fs = re.search(r"\(size\s+([-\d.]+)", pb)
+            size = _num(fs.group(1)) if fs else 1.27
+            fx, fy = _num(pm.group(2)), _num(pm.group(3))
+            vertical = (int(float(pm.group(4) or 0)) + inst.rot) % 180 == 90
+            half_len, half_h = len(pm.group(1)) * size * 0.45 + 0.2, size * 0.65
+            just = re.search(r"\(justify\s+([^)]*)\)", pb)
+            j = just.group(1) if just else ""
+            if vertical:
+                box = (fx - half_h, fy - half_len, fx + half_h, fy + half_len)
+            else:
+                cx = fx + half_len if "left" in j else fx - half_len if "right" in j else fx
+                box = (cx - half_len, fy - half_h, cx + half_len, fy + half_h)
+            inst.texts.append(box)
+            fields += [(box[0], box[1]), (box[2], box[3])]
         insts.append(inst)
     # connection points drawn by KiCad itself: wire ends, labels, no-connects, junctions
     conn: list[tuple[float, float]] = []
@@ -180,8 +192,9 @@ def parse_sheet(path: Path) -> tuple[list[Inst], list[tuple[float, float]], list
     for m in re.finditer(r"\((?:wire|bus|polyline)\s+\(pts((?:\s*\(xy\s+[-\d.]+\s+[-\d.]+\))+)", text):
         for x, y in re.findall(r"\(xy\s+([-\d.]+)\s+([-\d.]+)\)", m.group(1)):
             conn.append((_num(x), _num(y)))
+    # labels may carry "(shape ...)"/"(fields_autoplaced ...)" before "(at ...)"
     for m in re.finditer(r"\((?:label|global_label|hierarchical_label|no_connect|junction|text|sheet)\s"
-                         r"[^()]*\(at\s+([-\d.]+)\s+([-\d.]+)", text):
+                         r"(?:[^()]|\([^()]*\))*?\(at\s+([-\d.]+)\s+([-\d.]+)", text):
         conn.append((_num(m.group(1)), _num(m.group(2))))
     extent += conn + fields
     return insts, conn, extent
@@ -371,6 +384,18 @@ def plan(inst: Inst) -> tuple[str, dict]:
     return "ghost", {"box": (bx0 + 1, by0 + 1, bx1 - 1, by1 - 1)}
 
 
+def clear_of_text(cx: float, cy: float, w: float, h: float, ang: float,
+                  obstacles: list[tuple[float, float, float, float]]) -> float:
+    """Largest scale in (0.45..1] so the (rotated) image rect overlaps no text box."""
+    horiz = round(ang) % 180 == 0
+    for sc in (1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.45):
+        ww, hh = (w * sc, h * sc) if horiz else (h * sc, w * sc)
+        r = (cx - ww / 2, cy - hh / 2, cx + ww / 2, cy + hh / 2)
+        if not any(r[0] < b[2] and b[0] < r[2] and r[1] < b[3] and b[1] < r[3] for b in obstacles):
+            return sc
+    return 0.45
+
+
 def compose(sheet: Path, out_svg: Path, pcbnew) -> dict[str, int]:
     cli = str(kp.kicad_cli())
     insts, conn, extent = parse_sheet(sheet)
@@ -410,6 +435,7 @@ def compose(sheet: Path, out_svg: Path, pcbnew) -> dict[str, int]:
         thumbs = render_thumbs(pcbnew, jobs, sheet.parent, work, cli)
 
         overlay = []
+        all_text = [b for i in insts for b in i.texts]
         for inst, mode, info, key in placements:
             th = thumbs.get(key)
             if not th:
@@ -419,10 +445,16 @@ def compose(sheet: Path, out_svg: Path, pcbnew) -> dict[str, int]:
             href = base64.b64encode(png).decode()
             if mode == "lead":  # hide the symbol body, the pin lines stay as the leads
                 gx0, gy0, gx1, gy1 = info["cover"]
-                overlay.append(f'<rect x="{gx0 - 0.3:.3f}" y="{gy0 - 0.3:.3f}" width="{gx1 - gx0 + 0.6:.3f}" '
-                               f'height="{gy1 - gy0 + 0.6:.3f}" fill="#FFFFFF"/>')
+                cov = (gx0 - 0.3, gy0 - 0.3, gx1 + 0.3, gy1 + 0.3)
+                others = [b for b in all_text if b not in inst.texts]
+                # never white-out a neighbour's text: on crowded sheets keep the symbol under the part
+                if not any(cov[0] < b[2] and b[0] < cov[2] and cov[1] < b[3] and b[1] < cov[3] for b in others):
+                    overlay.append(f'<rect x="{cov[0]:.3f}" y="{cov[1]:.3f}" width="{cov[2] - cov[0]:.3f}" '
+                                   f'height="{cov[3] - cov[1]:.3f}" fill="#FFFFFF"/>')
                 sc = min(info["L"] / pw, info["across"] / ph)  # lead to lead, no taller than the body
                 w, h = pw * sc, ph * sc
+                k = clear_of_text(info["cx"], info["cy"], w, h, info["ang"], all_text)
+                w, h = w * k, h * k
                 cx, cy, ang = info["cx"], info["cy"], info["ang"]
                 overlay.append(f'<image x="{cx - w / 2:.3f}" y="{cy - h / 2:.3f}" width="{w:.3f}" '
                                f'height="{h:.3f}" transform="rotate({-ang:.1f} {cx:.3f} {cy:.3f})" '
@@ -436,6 +468,8 @@ def compose(sheet: Path, out_svg: Path, pcbnew) -> dict[str, int]:
                 sc = min((bx1 - bx0) / pw, (by1 - by0) / ph) * 1.25
                 w, h = pw * sc, ph * sc
                 cx, cy = (bx0 + bx1) / 2, (by0 + by1) / 2
+                k = clear_of_text(cx, cy, w, h, 0, [b for b in all_text if b not in inst.texts] + inst.texts)
+                w, h = w * k, h * k
                 overlay.append(f'<image x="{cx - w / 2:.3f}" y="{cy - h / 2:.3f}" width="{w:.3f}" '
                                f'height="{h:.3f}" href="data:image/png;base64,{href}" '
                                f'xlink:href="data:image/png;base64,{href}"/>')
@@ -449,13 +483,14 @@ def compose(sheet: Path, out_svg: Path, pcbnew) -> dict[str, int]:
                                f'xlink:href="data:image/png;base64,{href}"/>')
             stats[mode] += 1
 
-    for inst in insts:
-        if inst.geo:
-            b = inst.box(inst.geo.gbox)
-            extent += [(b[0], b[1]), (b[2], b[3])] + inst.tips
-    xs, ys = [p[0] for p in extent], [p[1] for p in extent]
-    bbox = (min(xs) - 8, min(ys) - 8, max(xs) + 8, max(ys) + 8)
-    if not sg.export_svg(cli, sheet, out_svg, bbox, extra="\n".join(overlay)):
+    # crop to what KiCad actually drew (text included) plus the overlays
+    ov = []
+    for m in re.finditer(r'<image x="([-\d.]+)" y="([-\d.]+)" width="([-\d.]+)" height="([-\d.]+)"',
+                         "\n".join(overlay)):
+        x, y, w, h = (float(v) for v in m.groups())
+        r = max(w, h) / 2
+        ov += [(x + w / 2 - r, y + h / 2 - r), (x + w / 2 + r, y + h / 2 + r)]
+    if not sg.export_svg(cli, sheet, out_svg, None, extra="\n".join(overlay), extent=ov, margin=4):
         raise RuntimeError("kicad-cli sch export svg failed")
     return stats
 
