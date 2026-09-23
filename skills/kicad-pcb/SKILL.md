@@ -61,6 +61,9 @@ python3 skills/kicad-pcb/scripts/easyeda_bridge.py import-pro project.epro --out
 #    LCSC part -> KiCad symbol/footprint/3D (needs easyeda2kicad installed)
 python3 skills/kicad-pcb/scripts/easyeda_bridge.py lcsc C2040 --out outdir/lcsc-lib
 
+# 3b) existing project -> starting-point board (copy in --out; source untouched)
+python3 skills/kicad-pcb/scripts/sch_to_board.py project/root.kicad_sch --out try1 --layers 4
+
 # 4) 3D schematic of any sheet (EasyEDA-style, KiCad renders of each part)
 python3 skills/kicad-pcb/scripts/pictorial.py board.kicad_sch --out 3d-schematic.svg --png 3d.png
 
@@ -167,6 +170,18 @@ nothing to configure.
     JSON has `violations` / `unconnected_items` / `schematic_parity` at the top level.
     Reading only `violations` from an ERC file reports a false "clean".
     `kicad-cli sch export svg --output X` writes a DIRECTORY of per-sheet SVGs.
+22. New boards get KiCad's generic minimums (0.2 mm track, 0.3 mm hole): they reject
+    manufacturable vendor footprints (0.2 mm thermal vias in RF modules) and
+    Freerouting's 0.15 mm neck-downs. Set the fab's minimums first (`sch_to_board.py
+    --fab jlcpcb`). Freerouting also rounds some gaps to just under the netclass
+    clearance (0.1981 vs 0.2 mm): export the DSN with +0.01 mm and restore it at once —
+    netclasses are PROJECT settings shared by every loaded board, so a change left in
+    memory is saved into the `.kicad_pro`.
+23. Observed, not yet explained (KiCad 10.0.6, kicad-cli): in a HIERARCHICAL project,
+    `pcb drc --schematic-parity` reported "no corresponding pin found in schematic" for
+    pads on unnamed nets local to a sub-sheet (`Net-(U1-EN)`, `unconnected-(...)`), even
+    with the exact netlist names; the same nets pass on a flat sheet. Cross-check with
+    the GUI's "Update PCB from Schematic" before treating it as a design error.
 
 ## JLCPCB-class fab rules (2-layer)
 
@@ -234,6 +249,23 @@ The Visual feedback loop (above) gates the release of this package — run it BE
 declaring the project done, and put the gap list in the brief's open issues. Report
 what the PDF shows (including OPEN/FAIL states) to the user; never summarize it as
 "done" or "validated" when a check is open.
+
+## Existing project -> possible PCB (agent workflow)
+
+For "here is a nearly finished project, make a possible PCB / check the schematics":
+1. Read the project's own rules first (AGENTS.md, decisions, handoff gates). If they
+   reserve layout for a later phase, work only in a copy and say so.
+2. `check_env.py`, then ERC of the root sheet — also with an empty `KICAD_CONFIG_HOME`
+   to catch missing project library tables (pitfall 19).
+3. `pictorial.py` per sheet: the transform check must report all pin tips on
+   connection points; review the 3D schematic for wrong packages.
+4. `sch_to_board.py ROOT.kicad_sch --out DIR --layers N` builds a board from the
+   netlist (footprints, nets, symbol paths), applies JLCPCB-class minimums, packs parts
+   largest-first, routes with Freerouting and runs DRC + parity. The packing ignores
+   edges, antennas, decoupling and floorplans: treat it as a connectivity/feasibility
+   check, then move parts (Visual feedback loop) before any routing is trusted.
+5. Close with the deliverables contract below: brief + `design_doc.py` PDF, reporting
+   OPEN/FAIL states as they are.
 
 ## Schematic conventions (headless or GUI)
 

@@ -65,6 +65,10 @@ python skills/kicad-pcb/scripts/easyeda_bridge.py import-pro project.epro --out 
 # LCSC part -> KiCad symbol + footprint + 3D (needs easyeda2kicad)
 python skills/kicad-pcb/scripts/easyeda_bridge.py lcsc C2040 --out out/lib
 
+# existing project (any KiCad 10 schematic, hierarchical OK) -> starting-point board:
+# netlist-driven footprints/nets, packing, Freerouting, GND pours, DRC with parity
+python skills/kicad-pcb/scripts/sch_to_board.py project/root.kicad_sch --out board-try --layers 4
+
 # 3D schematic (EasyEDA-style) of ANY KiCad sheet: parts drawn with their 3D models
 python skills/kicad-pcb/scripts/pictorial.py board.kicad_sch --out 3d-schematic.svg --png 3d-schematic.png
 
@@ -93,12 +97,13 @@ Optional env overrides: `KICAD_PYTHON`, `KICAD_CLI`,
 
 | File | Purpose |
 |---|---|
-| `skills/kicad-pcb/SKILL.md` | Reviewed-design workflow + headless pipelines + 21 pitfalls |
+| `skills/kicad-pcb/SKILL.md` | Reviewed-design workflow + headless pipelines + 23 pitfalls |
 | `skills/kicad-pcb/references/api-cheatsheet.md` | Verified pcbnew Python calls (KiCad 10.0.6) + Freerouting bundle-first guide |
 | `skills/kicad-pcb/references/jlcpcb-rules.md` | JLCPCB fab/assembly rules + PCBA BOM/CPL upload workflow |
 | `skills/kicad-pcb/scripts/kicad_paths.py` | Cross-platform tool resolvers (env > known paths > PATH) |
 | `skills/kicad-pcb/scripts/simple_board.py` | KiCad-only LED board: schematic + board + ERC/DRC/parity + fab zip + renders |
 | `skills/kicad-pcb/scripts/sch_gen.py` | Readable KiCad 10 schematics from Python + cropped SVG export (used by both examples) |
+| `skills/kicad-pcb/scripts/sch_to_board.py` | Any existing schematic -> starting-point board (placement is naive: review it) with DRC + parity |
 | `skills/kicad-pcb/scripts/pictorial.py` | 3D schematic of any sheet: KiCad 3D renders of each part drawn into the schematic |
 | `skills/kicad-pcb/scripts/design_doc.py` | Hardware design document (PDF): brief + 3D schematic + schematic + renders + layers + BOM + measured ERC/DRC/parity |
 | `skills/kicad-pcb/references/design_brief_template.md` | What the engineer/agent writes for the PDF: purpose, theory of operation, calculations, assumptions, open issues |

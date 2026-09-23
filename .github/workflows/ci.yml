@@ -24,6 +24,7 @@ jobs:
           skills/kicad-pcb/scripts/simple_board.py
           skills/kicad-pcb/scripts/sch_gen.py
           skills/kicad-pcb/scripts/pictorial.py
+          skills/kicad-pcb/scripts/sch_to_board.py
           skills/kicad-pcb/scripts/design_doc.py
           skills/kicad-pcb/scripts/make_report.py
           skills/kicad-pcb/scripts/attach_easyeda_3d.py
@@ -89,6 +90,13 @@ jobs:
           python .github/scripts/example_gate.py out *> gate.log
           $rc = $LASTEXITCODE; Get-Content gate.log
           if ($rc -ne 0) { "::error title=example_gate::" + ((Get-Content gate.log) -join '%0A'); exit $rc }
+      - name: Existing schematic -> board (sch_to_board.py on the LED example) must be clean
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          python skills/kicad-pcb/scripts/sch_to_board.py simple-out/simple-led.kicad_sch --out s2b-led *> s2b.log
+          $rc = $LASTEXITCODE; Get-Content s2b.log
+          if ($rc -ne 0) { "::error title=sch_to_board.py exit $rc::" + ((Get-Content s2b.log -Tail 30) -join '%0A'); exit $rc }
       - name: Design documents (3D schematic + PDF) for both examples
         shell: pwsh
         run: |
@@ -167,6 +175,13 @@ jobs:
           if [ "$rc" -ne 0 ]; then
             echo "::error title=example_gate::$(tail_note gate.log)"; exit "$rc"
           fi
+      - name: Existing schematic -> board (sch_to_board.py on the LED example) must be clean
+        run: |
+          tail_note() { tail -30 "$1" | awk 'BEGIN{ORS="%0A"} {gsub(/%/,"%25"); print}'; }
+          rc=0
+          python3 skills/kicad-pcb/scripts/sch_to_board.py simple-out/simple-led.kicad_sch --out s2b-led > s2b.log 2>&1 || rc=$?
+          cat s2b.log
+          if [ "$rc" -ne 0 ]; then echo "::error title=sch_to_board.py exit $rc::$(tail_note s2b.log)"; exit "$rc"; fi
       - name: Design documents (3D schematic + PDF) for both examples
         run: |
           tail_note() { tail -30 "$1" | awk 'BEGIN{ORS="%0A"} {gsub(/%/,"%25"); print}'; }
