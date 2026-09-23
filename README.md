@@ -1,6 +1,6 @@
 # kicad-pcb — KiCad PCB automation for Hermes Agent
 
-[![skills.sh](https://www.skills.sh/b/pantojinho/hermes-kicad-pcb)](https://www.skills.sh/pantojinho/hermes-kicad-pcb)
+[![skills.sh](https://img.shields.io/badge/skills.sh-listed-1abc9c)](https://www.skills.sh/pantojinho/hermes-kicad-pcb)
 [![ci](https://github.com/pantojinho/hermes-kicad-pcb/actions/workflows/ci.yml/badge.svg)](https://github.com/pantojinho/hermes-kicad-pcb/actions/workflows/ci.yml)
 
 Headless PCB design skill for **Linux, Windows and macOS**: native schematics,
