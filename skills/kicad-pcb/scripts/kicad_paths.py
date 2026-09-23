@@ -66,6 +66,31 @@ def verify_pcbnew(python: Path, timeout: int = 60) -> str | None:
     return None
 
 
+def import_pcbnew(script: str):
+    """`import pcbnew`, or re-exec `script` (with the same argv) in KiCad's bundled
+    Python when the current interpreter has no bindings (Windows/macOS). Every
+    script that needs pcbnew calls this instead of a bare `import pcbnew`."""
+    import contextlib
+    import io
+    with contextlib.redirect_stderr(io.StringIO()):  # PROPERTY_ENUM asserts = noise
+        try:
+            import pcbnew
+            return pcbnew
+        except ImportError:
+            pass
+    if os.environ.get("_KICAD_PCB_REEXEC"):
+        sys.exit("ERROR: pcbnew not importable even in KiCad's Python. Set KICAD_PYTHON.")
+    for py in python_with_pcbnew_candidates():
+        if py == Path(sys.executable) or not py.exists():
+            continue
+        if verify_pcbnew(py, timeout=300):
+            env = dict(os.environ, _KICAD_PCB_REEXEC="1", KICAD_PYTHON=str(py))
+            print(f"[shim] re-executing in KiCad's Python: {py}", flush=True)
+            r = subprocess.run([str(py), str(Path(script).resolve())] + sys.argv[1:], env=env)
+            sys.exit(r.returncode)
+    sys.exit("ERROR: no Python with pcbnew bindings found. Install KiCad 10 or set KICAD_PYTHON.")
+
+
 # ---------------------------------------------------------------- footprints
 
 def footprints_dir() -> Path:
@@ -96,6 +121,32 @@ def footprints_dir() -> Path:
                 return p
     raise ResolveError("footprints dir", "install the official KiCad 10 libraries and/or set "
                        f"{'|'.join(envs)}. Roots searched: " + ", ".join(str(r) for r in roots))
+
+
+def footprint_lib(nick: str, project_dir: Path | None = None) -> Path | None:
+    """`.pretty` dir for a footprint library nickname: the project's fp-lib-table
+    (${KIPRJMOD}, ${KICAD*_FOOTPRINT_DIR}, env vars) first, then the official libs."""
+    official = None
+    try:
+        official = footprints_dir()
+    except ResolveError:
+        pass
+    if project_dir:
+        table = Path(project_dir) / "fp-lib-table"
+        if table.exists():
+            text = table.read_text(encoding="utf-8", errors="replace")
+            for m in re.finditer(r'\(lib\s+\(name\s+"?([^")\s]+)"?\).*?\(uri\s+"?([^")]+?)"?\)', text, re.S):
+                if m.group(1) != nick:
+                    continue
+                uri = m.group(2).replace("${KIPRJMOD}", str(project_dir))
+                if official:
+                    uri = re.sub(r"\$\{KICAD\d*_FOOTPRINT_DIR\}", str(official).replace("\\", "/"), uri)
+                uri = os.path.expandvars(uri)
+                if Path(uri).is_dir():
+                    return Path(uri)
+    if official and (official / f"{nick}.pretty").is_dir():
+        return official / f"{nick}.pretty"
+    return None
 
 
 # ---------------------------------------------------------------- kicad-cli

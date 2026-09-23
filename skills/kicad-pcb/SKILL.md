@@ -1,6 +1,6 @@
 ---
 name: kicad-pcb
-description: 'Headless KiCad PCB automation using pcbnew Python, kicad-cli and optional Freerouting DSN/SES on Linux, Windows and macOS. Use for an existing, electrically reviewed KiCad design when scripting board placement/routing, running ERC/DRC, importing EasyEDA PCB geometry or exporting manufacturing files after the project release gate. This skill does not select circuits, certify electrical safety or replace RF, mechanical and fab review.'
+description: 'Headless KiCad PCB automation using pcbnew Python, kicad-cli and optional Freerouting DSN/SES on Linux, Windows and macOS. Use for an existing, electrically reviewed KiCad design when scripting schematics, board placement/routing, running ERC/DRC, importing EasyEDA PCB geometry, exporting manufacturing files after the project release gate, and producing the hardware design document (PDF with theory of operation, 3D schematic, renders, BOM and measured ERC/DRC). This skill does not select circuits, certify electrical safety or replace RF, mechanical and fab review.'
 ---
 
 # KiCad PCB automation (headless, cross-platform)
@@ -60,6 +60,17 @@ python3 skills/kicad-pcb/scripts/esp32_example.py --out /tmp/esp32
 python3 skills/kicad-pcb/scripts/easyeda_bridge.py import-pro project.epro --out outdir/
 #    LCSC part -> KiCad symbol/footprint/3D (needs easyeda2kicad installed)
 python3 skills/kicad-pcb/scripts/easyeda_bridge.py lcsc C2040 --out outdir/lcsc-lib
+
+# 3b) existing project -> starting-point board (copy in --out; source untouched)
+python3 skills/kicad-pcb/scripts/sch_to_board.py project/root.kicad_sch --out try1 --layers 4
+
+# 4) 3D schematic of any sheet (EasyEDA-style, KiCad renders of each part)
+python3 skills/kicad-pcb/scripts/pictorial.py board.kicad_sch --out 3d-schematic.svg --png 3d.png
+
+# 5) hardware design document (PDF) — the closing deliverable of every project
+#    (pip install pymupdf; brief = references/design_brief_template.md filled in)
+python3 skills/kicad-pcb/scripts/design_doc.py --sch board.kicad_sch --pcb board.kicad_pcb \
+        --brief design_brief.md --fab gerbers.zip --out DESIGN.pdf
 
 # isolated demo stages
 python3 demo_autoroute.py --stage create   # board + DSN
@@ -149,6 +160,28 @@ nothing to configure.
     On GitHub Actions: logs need a login but annotations are public — emit
     `::error::` with the output tail; pwsh turns native exit codes into exit 1 unless
     `$PSNativeCommandUseErrorActionPreference = $false`.
+20. KiCad 10.0.6 Python: after `footprint.Remove(item)` other SWIG proxies can degrade
+    to bare `SwigPyObject` (`.Pads()`, `.GetDesignSettings()` stop working). Do the
+    board-level setup first, never remove footprint items in a loop you still need;
+    `pictorial.py` renders a single part on a hidden 0.1 mm board instead of stripping
+    the footprint. Any script needing pcbnew calls `kicad_paths.import_pcbnew(__file__)`
+    (re-exec in KiCad's Python) — a bare `import pcbnew` fails on Windows/macOS.
+21. Reading KiCad reports: ERC JSON nests findings under `sheets[].violations`, DRC
+    JSON has `violations` / `unconnected_items` / `schematic_parity` at the top level.
+    Reading only `violations` from an ERC file reports a false "clean".
+    `kicad-cli sch export svg --output X` writes a DIRECTORY of per-sheet SVGs.
+22. New boards get KiCad's generic minimums (0.2 mm track, 0.3 mm hole): they reject
+    manufacturable vendor footprints (0.2 mm thermal vias in RF modules) and
+    Freerouting's 0.15 mm neck-downs. Set the fab's minimums first (`sch_to_board.py
+    --fab jlcpcb`). Freerouting also rounds some gaps to just under the netclass
+    clearance (0.1981 vs 0.2 mm): export the DSN with +0.01 mm and restore it at once —
+    netclasses are PROJECT settings shared by every loaded board, so a change left in
+    memory is saved into the `.kicad_pro`.
+23. Observed, not yet explained (KiCad 10.0.6, kicad-cli): in a HIERARCHICAL project,
+    `pcb drc --schematic-parity` reported "no corresponding pin found in schematic" for
+    pads on unnamed nets local to a sub-sheet (`Net-(U1-EN)`, `unconnected-(...)`), even
+    with the exact netlist names; the same nets pass on a flat sheet. Cross-check with
+    the GUI's "Update PCB from Schematic" before treating it as a design error.
 
 ## JLCPCB-class fab rules (2-layer)
 
@@ -183,34 +216,84 @@ Every board iteration MUST be checked with vision against reality, not just DRC:
 
 ## Project deliverables contract (mandatory for every board)
 
-Every board project — KiCad-only or KiCad+EasyEDA — must ship the SAME
-software-independent package. The source of parts (official KiCad libs, EasyEDA/LCSC
-import) never changes the deliverable format: a consumer of the project needs only KiCad.
+Whenever this skill is used on a project — a new board, a nearly finished design, or
+only its schematics — the work ENDS with the same software-independent package. The
+source of the parts (official KiCad libs, EasyEDA/LCSC import) never changes it; a
+consumer needs only KiCad and a PDF reader.
 
-1. **Validated design**: native `.kicad_sch` + `.kicad_pcb` + `.kicad_pro` (ERC/DRC/
-   unconnected/parity reviewed; exceptions documented with fab justification).
-2. **Board 3D**: package-verified 3D models on every footprint
-   (`attach_easyeda_3d.py` with LCSC STEP, or kicad-library-3d) + board-level **STEP**.
-3. **Project document**: `make_report.py --project DIR --lcsc REF=Cxxxxx ...` writes
-   `REPORT.md` with the standard prints: schematic figure, 3D renders top+bottom,
-   fabrication-ready **BOM** (refs/qty/value/package/LCSC/JLCPCB Basic-Extended),
-   validation summary and a pre-order review checklist.
-4. **Fabrication pack**: gerbers + drill + CPL (pos) + BOM CSV, zipped against the
+1. **Design brief, written while working** (`references/design_brief_template.md`):
+   purpose, requirements, architecture, theory of operation per block, design
+   calculations with datasheet references, component choices, layout notes,
+   assumptions/TBDs, open issues, bring-up plan. Verified facts, calculations,
+   assumptions and TBDs stay distinguishable; nothing is invented (part numbers,
+   prices, stock, measurements, test results). Reviewed ERC/DRC exceptions go in its
+   front matter as `reviewed <type>: <justification>`.
+2. **Validated design**: native `.kicad_sch` + `.kicad_pcb` + `.kicad_pro` + project
+   `sym-lib-table`/`fp-lib-table`; ERC/DRC/unconnected/parity reviewed.
+3. **Hardware design document (PDF)** — the "official" deliverable:
+   `pip install pymupdf` then
+   `design_doc.py --sch X.kicad_sch --pcb X.kicad_pcb --brief brief.md --fab fab.zip --out DESIGN.pdf`.
+   Cover with 3D render and verification status, document control (tool version,
+   SHA-256 of every source file), the brief, 3D schematic (`pictorial.py`), vector
+   schematic, board statistics + 3D views + vector layer plots, BOM from the netlist,
+   ERC/DRC/parity measured at generation, manufacturing outputs, open issues. Every
+   figure is measured when the PDF is built; with no PCB yet the document says so. A
+   project with only schematics still gets the PDF (sections 1-3, 5, 6, 8).
+4. **Board 3D**: official footprints already carry aligned 3D models; LCSC models only
+   with explicit offsets (see below). Board STEP: `kicad-cli pcb export step`.
+5. **Fabrication pack**: gerbers + drill + CPL (pos) + BOM CSV, zipped against the
    selected fab's rules (`references/jlcpcb-rules.md`).
 
+Optional quick view: `make_report.py --project DIR` writes a Markdown `REPORT.md`.
 The Visual feedback loop (above) gates the release of this package — run it BEFORE
-declaring the project done, and attach the gap list found by comparison as the next
-iteration's task list. A generated 3D model set and the report document are part of
-"done", not optional extras.
+declaring the project done, and put the gap list in the brief's open issues. Report
+what the PDF shows (including OPEN/FAIL states) to the user; never summarize it as
+"done" or "validated" when a check is open.
+
+## Existing project -> possible PCB (agent workflow)
+
+For "here is a nearly finished project, make a possible PCB / check the schematics":
+1. Read the project's own rules first (AGENTS.md, decisions, handoff gates). If they
+   reserve layout for a later phase, work only in a copy and say so.
+2. `check_env.py`, then ERC of the root sheet — also with an empty `KICAD_CONFIG_HOME`
+   to catch missing project library tables (pitfall 19).
+3. `pictorial.py` per sheet: the transform check must report all pin tips on
+   connection points; review the 3D schematic for wrong packages.
+4. `sch_to_board.py ROOT.kicad_sch --out DIR --layers N` builds a board from the
+   netlist (footprints, nets, symbol paths), applies JLCPCB-class minimums, packs parts
+   largest-first, routes with Freerouting and runs DRC + parity. The packing ignores
+   edges, antennas, decoupling and floorplans: treat it as a connectivity/feasibility
+   check, then move parts (Visual feedback loop) before any routing is trusted.
+5. Close with the deliverables contract below: brief + `design_doc.py` PDF, reporting
+   OPEN/FAIL states as they are.
+
+## Schematic conventions (headless or GUI)
+
+From KiCad's Getting Started guide (docs.kicad.org, "Wiring the Schematic",
+"Annotation, Symbol Properties, and Footprints", "Electrical Rules Check") plus this
+skill's generator (`sch_gen.py`) — follow them when writing sheets from Python:
+- power and ground as power symbols (supplies point up, ground down), PWR_FLAG on nets
+  fed from outside the sheet (connector, battery);
+- label nets instead of long wires; the same label name connects across sheets;
+- every symbol annotated, with a Value and an assigned footprint whose pads match the
+  symbol pins 1:1; no-connect flags only on pins that are really unused;
+- all pins and wire ends on the 1.27 mm (50 mil) grid;
+- signal flow left to right, one functional block per area/sheet;
+- run ERC after every schematic change; a zero ERC proves consistency, not correctness.
 
 ## EasyEDA 3D models
 
 `easyeda_bridge.py lcsc Cxxxxx` downloads symbol + footprint + 3D (WRL+STEP) via
-`easyeda2kicad`. Then `scripts/attach_easyeda_3d.py board.kicad_pcb --map REF=model.step
---step out.step --render out.png` attaches models and exports the board-level STEP.
-ALWAYS verify the downloaded model name matches the footprint package (model names
-carry the package, e.g. `SOT-223-4P_L6.5-W3.5-H1.6-LS7.0-P2.30`, `R0603`) — a
-mismatched shell corrupts the STEP and hides mechanical conflicts.
+`easyeda2kicad`. An LCSC model is authored for the LCSC footprint that comes with it —
+use that pair together whenever possible. To dress a different footprint:
+`scripts/attach_easyeda_3d.py board.kicad_pcb --map REF=model.step@dx,dy,dz,rx,ry,rz
+--step out.step --render out.png` (offsets in mm, rotations in degrees, as in KiCad's
+3D-model dialog), then LOOK at the render: without the right offset the body lands
+off its pads. Official KiCad footprints already carry aligned models and are skipped
+unless `--replace-official` is given. Check that the model's package matches the
+footprint (model names carry it, e.g. `SOT-223-4P_...`, `R0603`) and that the LCSC
+part is the same component as the footprint (e.g. a TYPE-C-31-M-12 model on a GCT
+USB4105 footprint is a different connector).
 
 ## Raw pcbnew calls (quick reference)
 
