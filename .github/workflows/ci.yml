@@ -23,6 +23,10 @@ jobs:
           skills/kicad-pcb/scripts/esp32_example.py
           skills/kicad-pcb/scripts/simple_board.py
           skills/kicad-pcb/scripts/sch_gen.py
+          skills/kicad-pcb/scripts/pictorial.py
+          skills/kicad-pcb/scripts/design_doc.py
+          skills/kicad-pcb/scripts/make_report.py
+          skills/kicad-pcb/scripts/attach_easyeda_3d.py
           .github/scripts/example_gate.py
       - name: SKILL.md frontmatter (real YAML parse)
         run: |
@@ -85,6 +89,18 @@ jobs:
           python .github/scripts/example_gate.py out *> gate.log
           $rc = $LASTEXITCODE; Get-Content gate.log
           if ($rc -ne 0) { "::error title=example_gate::" + ((Get-Content gate.log) -join '%0A'); exit $rc }
+      - name: Design documents (3D schematic + PDF) for both examples
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $S = "skills/kicad-pcb"
+          python $S/scripts/design_doc.py --sch simple-out/simple-led.kicad_sch --pcb simple-out/simple-led.kicad_pcb --brief $S/examples/simple_led_brief.md --fab simple-out/simple-led-gerbers.zip --out docs-out/simple-led-DESIGN.pdf *> doc.log
+          $rc1 = $LASTEXITCODE
+          python $S/scripts/design_doc.py --sch out/esp32-devboard.kicad_sch --pcb out/esp32-routed.kicad_pcb --brief $S/examples/esp32_brief.md --out docs-out/esp32-DESIGN.pdf *>> doc.log
+          $rc2 = $LASTEXITCODE; Get-Content doc.log
+          if ($rc1 -ne 0 -or $rc2 -ne 0 -or -not (Test-Path docs-out/esp32-DESIGN.pdf)) {
+            "::error title=design_doc.py::" + ((Get-Content doc.log -Tail 30) -join '%0A'); exit 1
+          }
       - name: Collect renders
         if: always()
         shell: pwsh
@@ -98,6 +114,7 @@ jobs:
           name: windows-e2e
           path: |
             renders/
+            docs-out/
             out/esp32-drc.json
             out/esp32-erc.json
             simple-out/drc.json
@@ -150,6 +167,16 @@ jobs:
           if [ "$rc" -ne 0 ]; then
             echo "::error title=example_gate::$(tail_note gate.log)"; exit "$rc"
           fi
+      - name: Design documents (3D schematic + PDF) for both examples
+        run: |
+          tail_note() { tail -30 "$1" | awk 'BEGIN{ORS="%0A"} {gsub(/%/,"%25"); print}'; }
+          S=skills/kicad-pcb; rc=0
+          { xvfb-run -a python3 $S/scripts/design_doc.py --sch simple-out/simple-led.kicad_sch --pcb simple-out/simple-led.kicad_pcb --brief $S/examples/simple_led_brief.md --fab simple-out/simple-led-gerbers.zip --out docs-out/simple-led-DESIGN.pdf \
+            && xvfb-run -a python3 $S/scripts/design_doc.py --sch out/esp32-devboard.kicad_sch --pcb out/esp32-routed.kicad_pcb --brief $S/examples/esp32_brief.md --out docs-out/esp32-DESIGN.pdf; } > doc.log 2>&1 || rc=$?
+          cat doc.log
+          if [ "$rc" -ne 0 ] || [ ! -f docs-out/esp32-DESIGN.pdf ]; then
+            echo "::error title=design_doc.py::$(tail_note doc.log)"; exit 1
+          fi
       - name: Collect renders
         if: always()
         run: |
@@ -162,6 +189,7 @@ jobs:
           name: linux-e2e
           path: |
             renders/
+            docs-out/
             out/esp32-drc.json
             out/esp32-erc.json
             simple-out/drc.json

@@ -239,7 +239,8 @@ class Schematic:
                           f'(stroke (width 0) (type default)) (uuid "{_uid(self.root, "w", str(a), str(b))}"))')
         self.extents.append((min(a[0], b[0]), min(a[1], b[1]), max(a[0], b[0]), max(a[1], b[1])))
 
-    def _power(self, net: str, at: tuple[float, float], out: int, flag: bool = False) -> None:
+    def _power(self, net: str, at: tuple[float, float], out: int, flag: bool = False,
+               text_side: int | None = None) -> None:
         name = "PWR_FLAG" if flag else net
         sym = self._symbol("power", name)
         body = next(iter(sym.pins.values())).angle           # body sits along the pin angle
@@ -250,6 +251,9 @@ class Schematic:
         gap = 3.81 if out in (90, 270) else 3.3
         tx, ty = at[0] + dx * gap, at[1] + dy * gap          # value text beyond the body
         jx = {0: " (justify left)", 180: " (justify right)"}.get(out, "")
+        if text_side in (0, 180):  # beside the symbol (keeps a flag's text off neighbours)
+            tx, ty = at[0] + DIRS[text_side][0] * 1.905, at[1] - 2.54
+            jx = " (justify left)" if text_side == 0 else " (justify right)"
         fa = 90 if rot in (90, 270) else 0  # field angles turn with the symbol: undo it
         uid = _uid(self.root, ref)
         self.items.append(
@@ -323,7 +327,7 @@ class Schematic:
             fl = step(mid, away)
             self._wire(mid, fl)
             self._junction(mid)
-            self._power(net, fl, 90, flag=True)          # upright flag, text on top
+            self._power(net, fl, 90, flag=True, text_side=away)  # upright flag, text beside
 
     def no_connect_rest(self) -> int:
         """No-connect flag on every pin position that carries no net."""
@@ -377,10 +381,13 @@ def write_lib_tables(outdir: Path, sym_libs, fp_libs) -> None:
 
 # ------------------------------------------------------------------ images
 
-def export_svg(cli: str, sch: Path, out_svg: Path, bbox: tuple[float, float, float, float]) -> bool:
-    """Schematic -> SVG cropped to `bbox` (sheet mm), no drawing sheet, white background."""
+def export_svg(cli: str, sch: Path, out_svg: Path, bbox: tuple[float, float, float, float],
+               extra: str = "") -> bool:
+    """Schematic -> SVG cropped to `bbox` (sheet mm), no drawing sheet, white background.
+    `extra`: SVG elements in sheet-mm coordinates drawn on top (e.g. pictorial.py)."""
     with tempfile.TemporaryDirectory() as td:
-        subprocess.run([cli, "sch", "export", "svg", "-e", "-o", td, str(sch)],
+        # -n: no theme background, so the white page below is the only background
+        subprocess.run([cli, "sch", "export", "svg", "-e", "-n", "-o", td, str(sch)],
                        capture_output=True, text=True, timeout=300)
         svgs = list(Path(td).glob("*.svg"))
         if not svgs:
@@ -400,6 +407,8 @@ def export_svg(cli: str, sch: Path, out_svg: Path, bbox: tuple[float, float, flo
     svg = re.sub(r'(<svg[^>]*\s)height="[\d.]+mm"', rf'\g<1>height="{y1 - y0:.1f}mm"', svg, count=1)
     bg = f'<rect x="{x0 * k:.3f}" y="{y0 * k:.3f}" width="{(x1 - x0) * k:.3f}" height="{(y1 - y0) * k:.3f}" fill="#FFFFFF"/>'
     svg = re.sub(r'(<svg[^>]*>)', lambda mm: mm.group(1) + "\n" + bg, svg, count=1)
+    if extra:
+        svg = svg.replace("</svg>", f'<g transform="scale({k:.6f})">\n{extra}\n</g>\n</svg>', 1)
     out_svg.write_text(svg, encoding="utf-8")
     return True
 

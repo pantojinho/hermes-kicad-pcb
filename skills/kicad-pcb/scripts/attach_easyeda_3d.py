@@ -2,8 +2,15 @@
 """Attach EasyEDA/LCSC 3D models to board footprints and export board-level STEP.
 
 Interface (as documented in SKILL.md):
-  attach_easyeda_3d.py board.kicad_pcb --map REF=model.step [--map ...]
+  attach_easyeda_3d.py board.kicad_pcb --map REF=model.step[@dx,dy,dz[,rx,ry,rz]] [--map ...]
                         [--step out.step] [--render out.png] [--render-bottom out.png]
+                        [--replace-official] [--strict]
+
+Offsets are in mm, rotations in degrees, exactly as in KiCad's footprint 3D-model
+dialog. An LCSC/EasyEDA model is authored for the LCSC footprint: on any other
+footprint it needs its own offset/rotation, otherwise the body lands off its pads.
+Footprints from KiCad's official libraries already carry an aligned 3D model; they
+are skipped unless --replace-official is given (then CHECK the render).
 
 Models come from `easyeda_bridge.py lcsc Cxxxxx` (writes <part>-lib/<part>.3dshapes/*.step).
 ALWAYS check the model filename matches the footprint package (the names carry it,
@@ -64,6 +71,8 @@ def main() -> int:
     ap.add_argument("--render-bottom", help="render bottom PNG here")
     ap.add_argument("--render-size", default="1600x1200", help="render WxH (default 1600x1200)")
     ap.add_argument("--strict", action="store_true", help="fail on any package-mismatch warning")
+    ap.add_argument("--replace-official", action="store_true",
+                    help="also replace the (already aligned) model of official KiCad-library footprints")
     args = ap.parse_args()
 
     board_path = Path(args.board).expanduser().resolve()
@@ -72,8 +81,12 @@ def main() -> int:
         return 2
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import kicad_paths as kp  # noqa: E403  (resolves the pcbnew interpreter)
-    import pcbnew  # noqa: E403
+    import kicad_paths as kp  # noqa: E402
+    pcbnew = kp.import_pcbnew(__file__)  # re-execs in KiCad's Python on Windows/macOS
+    try:
+        official_dir = kp.footprints_dir()
+    except kp.ResolveError:
+        official_dir = None
 
     board = pcbnew.LoadBoard(str(board_path))
     by_ref = {f.GetReference(): f for f in board.GetFootprints()}
@@ -86,6 +99,16 @@ def main() -> int:
             return 2
         ref, raw = entry.split("=", 1)
         ref = ref.strip()
+        raw, _, xform = raw.partition("@")
+        try:
+            nums = [float(v) for v in xform.split(",")] if xform else []
+        except ValueError:
+            print(f"ERROR: --map {entry}: offsets/rotations must be numbers", file=sys.stderr)
+            return 2
+        if len(nums) not in (0, 3, 6):
+            print(f"ERROR: --map {entry}: use @dx,dy,dz or @dx,dy,dz,rx,ry,rz", file=sys.stderr)
+            return 2
+        nums += [0.0] * (6 - len(nums))
         model_path = Path(raw.strip()).expanduser().resolve()
         fp = by_ref.get(ref)
         if fp is None:
@@ -94,6 +117,11 @@ def main() -> int:
         if not model_path.exists():
             print(f"ERROR: model not found: {model_path}", file=sys.stderr)
             return 2
+        nick = fp.GetFPIDAsString().split(":")[0]
+        if official_dir and (official_dir / f"{nick}.pretty").is_dir() and not args.replace_official:
+            print(f"[skip] {ref}: '{fp.GetFPIDAsString()}' is an official KiCad footprint and already "
+                  "carries an aligned 3D model; pass --replace-official (with @offsets) to override")
+            continue
         warnings += warn_mismatch(ref, fp.GetFPIDAsString(), model_path)
         try:  # idempotente: substitui modelos existentes deste footprint
             fp.Models().clear()
@@ -103,9 +131,12 @@ def main() -> int:
         m.m_Filename = str(model_path)
         m.m_Show = True
         m.m_Opacity = 1.0
+        m.m_Offset = pcbnew.VECTOR3D(*nums[:3])
+        m.m_Rotation = pcbnew.VECTOR3D(*nums[3:])
         fp.Add3DModel(m)
         attached += 1
-        print(f"[attach] {ref} ({fp.GetFPIDAsString().split(':')[-1]}) <- {model_path.name}")
+        print(f"[attach] {ref} ({fp.GetFPIDAsString().split(':')[-1]}) <- {model_path.name}"
+              + (f" @offset {nums[:3]} rot {nums[3:]}" if any(nums) else " (no offset: CHECK the render)"))
 
     for w in warnings:
         print(w, file=sys.stderr)
