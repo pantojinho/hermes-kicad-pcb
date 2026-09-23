@@ -175,11 +175,15 @@ which is what makes headless agent automation possible at all.
 | Automation | GUI-first; no headless schematic/board API | `pcbnew` Python + `kicad-cli` + Freerouting (DSN/SES) |
 | Fab handoff | JLCPCB quoting in-app | gerber/drill/BOM/CPL export (see `references/jlcpcb-rules.md`) |
 
-EasyEDA editor (note the **LCSC Parts** + **JLCPCB** library tabs) | KiCad wearing EasyEDA/LCSC 3D models
+EasyEDA schematic (note the 3D component symbols) | KiCad wearing EasyEDA/LCSC 3D models
 ---|---
-![EasyEDA web editor with the integrated LCSC/JLCPCB libraries](assets/easyeda-editor.png) | ![KiCad board with EasyEDA/LCSC STEP models attached](assets/kicad-with-easyeda-3d.png)
+![EasyEDA schematic with 3D component symbols](assets/easyeda-schematic.png) | ![KiCad board with EasyEDA/LCSC STEP models attached](assets/kicad-with-easyeda-3d.png)
 
-![EasyEDA home](assets/easyeda-home.png)
+*EasyEDA figure from the [EasyEDA Std User Guide — Schematic Capture](https://docs.easyeda.com/en/Introduction/Schematic-Capture/).*
+
+Parts ready for fabrication — the same board's BOM (LCSC numbers + JLCPCB Basic/Extended):
+
+![ESP32 dev board BOM — JLCPCB assembly-ready](assets/bom.png)
 
 This skill bridges **EasyEDA → KiCad**, one way: `import-pro` / `import-std` bring
 PCB geometry into `.kicad_pcb`, and `lcsc Cxxxxx` + `attach_easyeda_3d.py` bring
