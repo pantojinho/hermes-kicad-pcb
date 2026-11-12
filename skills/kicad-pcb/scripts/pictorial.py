@@ -519,7 +519,7 @@ def main() -> int:
         if sg.svg_to_png(args.out.resolve(), args.png.resolve(), 2000):
             print(f"[3d-sch] png: {args.png}")
         else:
-            print("[3d-sch] png skipped (pip install pymupdf, or set PNG_PYTHON)")
+            print("[3d-sch] png skipped (pip install pymupdf==2.1, or set PNG_PYTHON)")
     return 0
 
 

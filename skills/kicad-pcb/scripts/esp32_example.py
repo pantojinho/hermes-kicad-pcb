@@ -31,7 +31,6 @@ import argparse
 import contextlib
 import io
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -104,16 +103,16 @@ def _import_pcbnew():
             return pcbnew
         except ImportError:
             pass
-    if os.environ.get("_KICAD_PCB_REEXEC"):
+    if kp.REEXEC_CHILD:
         sys.exit("ERROR: pcbnew not importable even in the pointed KiCad Python. "
                  "Check the KiCad install or set KICAD_PYTHON.")
     for py in kp.python_with_pcbnew_candidates():
         if py == Path(sys.executable) or not py.exists():
             continue
         if kp.verify_pcbnew(py):
-            env = dict(os.environ, _KICAD_PCB_REEXEC="1", KICAD_PYTHON=str(py))
             print(f"[shim] re-executing in KiCad's Python: {py}")
-            r = subprocess.run([str(py), str(Path(__file__).resolve())] + sys.argv[1:], env=env)
+            r = subprocess.run([str(py), str(Path(__file__).resolve()),
+                                kp.REEXEC_FLAG, *sys.argv[1:]])
             sys.exit(r.returncode)
     sys.exit("ERROR: no Python with pcbnew bindings found. "
              "Install KiCad 10 or set KICAD_PYTHON.")
@@ -527,7 +526,7 @@ def renders(outdir: Path) -> None:
         bbox = SCH_BBOX[0]
     if sg.export_svg(cli, outdir / SCH, svg, bbox):
         png = sg.svg_to_png(svg, rdir / "schematic.png")
-        print(f"[render] schematic: {svg}{' + png' if png else ' (png: pip install pymupdf)'}")
+        print(f"[render] schematic: {svg}{' + png' if png else ' (png: pip install pymupdf==2.1)'}")
 
 
 # ------------------------------------------------------------------ main

@@ -30,6 +30,27 @@ class ResolveError(Exception):
         super().__init__(f"{component}: not found. {fix}")
 
 
+# ---------------------------------------------------------------- re-exec shim
+
+# Marker passed on argv when the shim re-execs a script in KiCad's Python.
+# It travels on the command line (not the environment) so the child inherits
+# the parent's environment naturally and no env copy is built here.
+REEXEC_FLAG = "--_kicad_pcb_reexec"
+
+# True when THIS process is the re-exec'd child: the flag was stripped from
+# sys.argv at import time so the entry scripts' argparse never sees it.
+REEXEC_CHILD = False
+
+
+def _pop_reexec_flag() -> None:
+    global REEXEC_CHILD
+    while REEXEC_FLAG in sys.argv:
+        sys.argv.remove(REEXEC_FLAG)
+        REEXEC_CHILD = True
+
+
+_pop_reexec_flag()
+
 # ---------------------------------------------------------------- python+pcbnew
 
 def python_with_pcbnew_candidates() -> list[Path]:
@@ -78,15 +99,15 @@ def import_pcbnew(script: str):
             return pcbnew
         except ImportError:
             pass
-    if os.environ.get("_KICAD_PCB_REEXEC"):
+    if REEXEC_CHILD:
         sys.exit("ERROR: pcbnew not importable even in KiCad's Python. Set KICAD_PYTHON.")
     for py in python_with_pcbnew_candidates():
         if py == Path(sys.executable) or not py.exists():
             continue
         if verify_pcbnew(py, timeout=300):
-            env = dict(os.environ, _KICAD_PCB_REEXEC="1", KICAD_PYTHON=str(py))
             print(f"[shim] re-executing in KiCad's Python: {py}", flush=True)
-            r = subprocess.run([str(py), str(Path(script).resolve())] + sys.argv[1:], env=env)
+            r = subprocess.run([str(py), str(Path(script).resolve()),
+                                REEXEC_FLAG, *sys.argv[1:]])
             sys.exit(r.returncode)
     sys.exit("ERROR: no Python with pcbnew bindings found. Install KiCad 10 or set KICAD_PYTHON.")
 
@@ -97,8 +118,8 @@ def footprints_dir() -> Path:
     """Official footprint libraries dir (contains Resistor_SMD.pretty)."""
     envs = ("KICAD10_FOOTPRINT_DIR", "KICAD9_FOOTPRINT_DIR", "KICAD_FOOTPRINT_DIR")
     for e in envs:
-        if os.environ.get(e):
-            p = Path(os.environ[e])
+        if p := os.getenv(e):
+            p = Path(p)
             if (p / FOOTPRINT_PROBE).is_dir():
                 return p
     roots: list[Path] = [Path("/usr/share/kicad"),
@@ -204,13 +225,11 @@ def java(min_major: int = 25) -> Path:
 
 def freerouting() -> tuple[str, list[str]]:
     """Returns (mode, argv): mode 'exe' (bundle launcher/PATH) or 'jar' (java -jar ...)."""
-    if os.environ.get("FREEROUTING_EXE"):
-        p = Path(os.environ["FREEROUTING_EXE"])
-        if p.exists():
+    if p := os.getenv("FREEROUTING_EXE"):
+        if (p := Path(p)).exists():
             return "exe", [str(p)]
-    if os.environ.get("FREEROUTING_JAR"):
-        j = Path(os.environ["FREEROUTING_JAR"])
-        if j.exists():
+    if j := os.getenv("FREEROUTING_JAR"):
+        if (j := Path(j)).exists():
             return "jar", [str(java()), "-jar", str(j)]
 
     home = Path.home()
