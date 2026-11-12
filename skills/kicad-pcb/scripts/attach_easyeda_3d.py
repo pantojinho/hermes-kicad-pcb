@@ -18,7 +18,7 @@ e.g. `SOT-223-4P_L6.5-W3.5-H1.6-LS7.0-P2.30`, `R0603`) — a mismatched shell co
 the STEP and hides mechanical conflicts. This script warns on suspicious mismatches.
 
 The board is saved in place after attaching (models per ref are REPLACED, so the
-command is idempotent). Exit codes: 0 ok | 2 bad args/env | 3 attach/export failed.
+command is idempotent). Exit codes: 0 ok | 2 bad args or environment | 3 attach/export failed.
 """
 from __future__ import annotations
 

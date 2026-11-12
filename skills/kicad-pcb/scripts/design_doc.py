@@ -21,7 +21,7 @@ Usage:
 
 `reviewed.json` = {"drc_type": "fab-backed justification", ...}: findings of those
 types are listed as reviewed exceptions instead of open ones — never silently hidden.
-Needs: KiCad 10 (kicad-cli) and `pip install pymupdf` in the python running this.
+Needs: KiCad 10 (kicad-cli) and `pip install pymupdf==2.1` in the python running this.
 Exit codes: 0 document written | 2 environment | 3 failed.
 """
 from __future__ import annotations
@@ -398,7 +398,7 @@ def main() -> int:
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
     if pymupdf is None:
-        print("ERROR: this script needs pymupdf in the running python: pip install pymupdf", file=sys.stderr)
+        print("ERROR: this script needs pymupdf in the running python: pip install pymupdf==2.1", file=sys.stderr)
         return 2
     sch = args.sch.resolve()
     pcb = args.pcb.resolve() if args.pcb else None

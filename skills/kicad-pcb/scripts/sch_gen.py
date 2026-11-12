@@ -39,7 +39,7 @@ FONT = '(effects (font (size 1.27 1.27)){extra})'
 def symbols_dir() -> Path:
     """Official symbol libs: env override, else next to the footprint libs."""
     for env in ("KICAD10_SYMBOL_DIR", "KICAD9_SYMBOL_DIR", "KICAD_SYMBOL_DIR"):
-        p = os.environ.get(env)
+        p = os.getenv(env)
         if p and (Path(p) / "Device.kicad_sym").exists():
             return Path(p)
     fp = kp.footprints_dir()

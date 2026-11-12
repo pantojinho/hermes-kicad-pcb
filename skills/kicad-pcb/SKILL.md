@@ -68,7 +68,7 @@ python3 skills/kicad-pcb/scripts/sch_to_board.py project/root.kicad_sch --out tr
 python3 skills/kicad-pcb/scripts/pictorial.py board.kicad_sch --out 3d-schematic.svg --png 3d.png
 
 # 5) hardware design document (PDF) — the closing deliverable of every project
-#    (pip install pymupdf; brief = references/design_brief_template.md filled in)
+#    (pip install pymupdf==2.1; brief = references/design_brief_template.md filled in)
 python3 skills/kicad-pcb/scripts/design_doc.py --sch board.kicad_sch --pcb board.kicad_pcb \
         --brief design_brief.md --fab gerbers.zip --out DESIGN.pdf
 
@@ -231,7 +231,7 @@ consumer needs only KiCad and a PDF reader.
 2. **Validated design**: native `.kicad_sch` + `.kicad_pcb` + `.kicad_pro` + project
    `sym-lib-table`/`fp-lib-table`; ERC/DRC/unconnected/parity reviewed.
 3. **Hardware design document (PDF)** — the "official" deliverable:
-   `pip install pymupdf` then
+   `pip install pymupdf==2.1` then
    `design_doc.py --sch X.kicad_sch --pcb X.kicad_pcb --brief brief.md --fab fab.zip --out DESIGN.pdf`.
    Cover with 3D render and verification status, document control (tool version,
    SHA-256 of every source file), the brief, 3D schematic (`pictorial.py`), vector
@@ -253,7 +253,7 @@ what the PDF shows (including OPEN/FAIL states) to the user; never summarize it 
 ## Existing project -> possible PCB (agent workflow)
 
 For "here is a nearly finished project, make a possible PCB / check the schematics":
-1. Read the project's own rules first (AGENTS.md, decisions, handoff gates). If they
+1. Read the project's own rules first (its rules file, decisions, handoff gates). If they
    reserve layout for a later phase, work only in a copy and say so.
 2. `check_env.py`, then ERC of the root sheet — also with an empty `KICAD_CONFIG_HOME`
    to catch missing project library tables (pitfall 19).

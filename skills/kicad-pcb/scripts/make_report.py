@@ -19,7 +19,7 @@ The prints are produced by kicad-cli (renders + schematic SVG) when missing.
 LCSC numbers are printed as supplied; stock class (Basic/Extended) and part/footprint
 match are NOT verified here — check them on JLCPCB before ordering. For the full,
 measured PDF deliverable use design_doc.py.
-Exit codes: 0 ok | 2 bad args/env | 3 generation failed.
+Exit codes: 0 ok | 2 bad args or environment | 3 generation failed.
 """
 from __future__ import annotations
 

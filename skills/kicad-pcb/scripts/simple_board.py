@@ -68,15 +68,15 @@ def _import_pcbnew():
             return pcbnew
         except ImportError:
             pass
-    if os.environ.get("_KICAD_PCB_REEXEC"):
+    if kp.REEXEC_CHILD:
         sys.exit("ERROR: pcbnew not importable even in KiCad's Python. Set KICAD_PYTHON.")
     for py in kp.python_with_pcbnew_candidates():
         if py == Path(sys.executable) or not py.exists():
             continue
         if kp.verify_pcbnew(py):
-            env = dict(os.environ, _KICAD_PCB_REEXEC="1", KICAD_PYTHON=str(py))
             print(f"[shim] re-executing in KiCad's Python: {py}", flush=True)
-            r = subprocess.run([str(py), str(Path(__file__).resolve())] + sys.argv[1:], env=env)
+            r = subprocess.run([str(py), str(Path(__file__).resolve()),
+                                kp.REEXEC_FLAG, *sys.argv[1:]])
             sys.exit(r.returncode)
     sys.exit("ERROR: no Python with pcbnew bindings found. Install KiCad 10 or set KICAD_PYTHON.")
 

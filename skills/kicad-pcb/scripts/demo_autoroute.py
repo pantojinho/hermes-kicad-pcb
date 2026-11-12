@@ -23,7 +23,6 @@ import argparse
 import contextlib
 import io
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -45,16 +44,16 @@ def _import_pcbnew():
             return pcbnew
         except ImportError:
             pass
-    if os.environ.get("_KICAD_PCB_REEXEC"):  # already tried once — do not loop
+    if kp.REEXEC_CHILD:  # already tried once — do not loop
         sys.exit("ERROR: pcbnew not importable even in the pointed KiCad Python. "
                  "Check the KiCad install or set KICAD_PYTHON.")
     for py in kp.python_with_pcbnew_candidates():
         if py == Path(sys.executable) or not py.exists():
             continue
         if kp.verify_pcbnew(py):
-            env = dict(os.environ, _KICAD_PCB_REEXEC="1", KICAD_PYTHON=str(py))
             print(f"[shim] re-executing in KiCad's Python: {py}")
-            r = subprocess.run([str(py), str(Path(__file__).resolve())] + sys.argv[1:], env=env)
+            r = subprocess.run([str(py), str(Path(__file__).resolve()),
+                                kp.REEXEC_FLAG, *sys.argv[1:]])
             sys.exit(r.returncode)
     sys.exit("ERROR: no Python with pcbnew bindings found. "
              "Install KiCad 10 (includes the bindings) or set KICAD_PYTHON.")
